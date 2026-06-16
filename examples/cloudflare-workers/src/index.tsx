@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import {
   stripeMiddleware,
+  getStripe,
   createPaymentIntent,
   createCheckoutSession,
   verifyStripeSignature,
@@ -26,9 +27,10 @@ const PRODUCT = {
   currency: 'usd',
 } as const
 
-// Inject `c.var.stripe` for every /api route. On Workers the middleware applies
-// Stripe.createFetchHttpClient() automatically.
+// Inject `c.var.stripe` for the API routes and the post-checkout return page.
+// On Workers the middleware applies Stripe.createFetchHttpClient() automatically.
 app.use('/api/*', stripeMiddleware())
+app.use('/return', stripeMiddleware())
 
 // ---------------------------------------------------------------------------
 // Layer 3 (UI) — pages served with hono/jsx. No React, no build step for the
@@ -77,7 +79,7 @@ app.get('/checkout', (c) =>
   c.html(
     <Layout title="Pay with Checkout Session">
       <h1>{PRODUCT.name}</h1>
-      <p>Checkout Sessions flow (ui_mode: custom).</p>
+      <p>Checkout Sessions flow (ui_mode: embedded_page).</p>
       <stripe-payment-element id="checkout" />
 
       <script type="module" src="https://cdn.jsdelivr.net/npm/stripe-pwa-elements/dist/stripe-pwa-elements/stripe-pwa-elements.esm.js" />
@@ -100,6 +102,27 @@ app.get('/checkout', (c) =>
     </Layout>,
   ),
 )
+
+// Where Stripe redirects the customer after the embedded Checkout Session
+// completes (see `return_url` below). Looks the session up to show its status.
+app.get('/return', async (c) => {
+  const sessionId = c.req.query('session_id')
+  if (!sessionId) return c.redirect('/')
+  const session = await getStripe(c).checkout.sessions.retrieve(sessionId)
+  const complete = session.status === 'complete'
+  return c.html(
+    <Layout title={complete ? 'Payment complete' : 'Payment status'}>
+      <h1>{complete ? 'Payment complete 🎉' : 'Payment status'}</h1>
+      <p>Thanks for your purchase.</p>
+      <p>
+        Status: {session.status} / {session.payment_status}
+      </p>
+      <p>
+        <a href="/">← Back to home</a>
+      </p>
+    </Layout>,
+  )
+})
 
 // ---------------------------------------------------------------------------
 // Layer 1 (intent / session creation) — hono-stripe helpers.
@@ -150,6 +173,9 @@ app.post('/api/checkout-session', async (c) => {
 // ---------------------------------------------------------------------------
 
 app.post('/api/webhook', async (c) => {
+  // On a missing/invalid signature, verifyStripeSignature throws an
+  // HTTPException(400), which Hono renders as a 400 response — so a bad
+  // signature already returns 400 (not 500) and does not trigger Stripe retries.
   const event = await verifyStripeSignature(c, { secret: c.env.STRIPE_WEBHOOK_SECRET })
 
   switch (event.type) {
