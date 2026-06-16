@@ -1,0 +1,19 @@
+{
+  "name": "hono-stripe",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "hideokamoto",
+  "license": "ISC",
+  "devDependencies": {
+    "hono": "^4.12.25",
+    "stripe": "^22.2.1",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
