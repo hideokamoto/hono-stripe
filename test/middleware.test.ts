@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import Stripe from 'stripe'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { stripeMiddleware } from '../src/middleware'
 import {
   __resetCaches,
@@ -21,8 +21,13 @@ const buildApp = (options?: Parameters<typeof stripeMiddleware>[0]) => {
   return app
 }
 
+// hono/adapter's env() reads c.env on the workerd runtime and process.env on
+// node. Faking the user agent lets us exercise the real Workers binding path.
+const asWorkers = () => vi.stubGlobal('navigator', { userAgent: 'Cloudflare-Workers' })
+
 beforeEach(() => __resetCaches())
 afterEach(() => {
+  vi.unstubAllGlobals()
   delete process.env.STRIPE_SECRET_KEY
   delete process.env.CUSTOM_KEY
 })
@@ -35,6 +40,7 @@ describe('stripeMiddleware', () => {
   })
 
   it('resolves the key from a Workers env binding', async () => {
+    asWorkers()
     const res = await buildApp().request('/', undefined, { STRIPE_SECRET_KEY: KEY })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ isStripe: true })
@@ -48,6 +54,7 @@ describe('stripeMiddleware', () => {
   })
 
   it('honors a custom secretKeyVar', async () => {
+    asWorkers()
     const res = await buildApp({ secretKeyVar: 'CUSTOM_KEY' }).request('/', undefined, {
       CUSTOM_KEY: KEY,
     })

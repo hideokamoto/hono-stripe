@@ -32,7 +32,7 @@ export const isWorkersRuntime = (): boolean =>
  */
 export const shouldUseFetchHttpClient = (): boolean => !isNodeRuntime()
 
-// One Stripe client per secret key — reused across requests.
+// One Stripe client per unique (key + config) — reused across requests.
 const clientCache = new Map<string, Stripe>()
 
 // SubtleCrypto provider is required for async webhook verification on the edge.
@@ -54,13 +54,30 @@ const buildConfig = (options: StripeMiddlewareOptions): StripeClientConfig => {
 }
 
 /**
- * Get (or lazily create and cache) a Stripe client for the given secret key.
+ * Build the cache key from the secret key and the options that affect client
+ * construction, so the same key initialized with different config does not
+ * silently reuse the first client.
+ */
+const getCacheKey = (apiKey: string, options: StripeMiddlewareOptions): string => {
+  try {
+    return `${apiKey}:${JSON.stringify({ apiVersion: options.apiVersion, config: options.config })}`
+  } catch {
+    // config may hold non-serializable values (e.g. a custom httpClient); fall
+    // back to keying by apiKey alone rather than throwing.
+    return apiKey
+  }
+}
+
+/**
+ * Get (or lazily create and cache) a Stripe client for the given secret key
+ * and options.
  */
 export const getStripeClient = (apiKey: string, options: StripeMiddlewareOptions): Stripe => {
-  const cached = clientCache.get(apiKey)
+  const cacheKey = getCacheKey(apiKey, options)
+  const cached = clientCache.get(cacheKey)
   if (cached) return cached
   const client = new Stripe(apiKey, buildConfig(options))
-  clientCache.set(apiKey, client)
+  clientCache.set(cacheKey, client)
   return client
 }
 

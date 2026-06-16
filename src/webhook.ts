@@ -1,4 +1,5 @@
 import type { Context } from 'hono'
+import { HTTPException } from 'hono/http-exception'
 import type Stripe from 'stripe'
 import { getStripe } from './context'
 import { getCryptoProvider } from './runtime'
@@ -25,7 +26,9 @@ export interface VerifyStripeSignatureOptions {
  * the job of `@kotodayori/hono`, which offers typed webhook routing on top of a
  * verified event. Reach for that when you outgrow this primitive.
  *
- * @throws if the signature header is missing or verification fails.
+ * @throws {HTTPException} 400 if the signature header is missing or
+ * verification fails — the correct response to Stripe (a 500 would make Stripe
+ * retry the delivery and pollute server error monitoring).
  *
  * @example
  * ```ts
@@ -43,14 +46,24 @@ export const verifyStripeSignature = async (
   const stripe = getStripe(c)
   const signature = c.req.header(options.signatureHeader ?? DEFAULT_SIGNATURE_HEADER)
   if (!signature) {
-    throw new Error('hono-stripe: missing Stripe signature header on webhook request.')
+    throw new HTTPException(400, {
+      message: 'hono-stripe: missing Stripe signature header on webhook request.',
+    })
   }
   const payload = await c.req.text()
-  return stripe.webhooks.constructEventAsync(
-    payload,
-    signature,
-    options.secret,
-    options.tolerance,
-    getCryptoProvider(),
-  )
+  try {
+    return await stripe.webhooks.constructEventAsync(
+      payload,
+      signature,
+      options.secret,
+      options.tolerance,
+      getCryptoProvider(),
+    )
+  } catch (err) {
+    throw new HTTPException(400, {
+      message:
+        err instanceof Error ? err.message : 'hono-stripe: webhook signature verification failed.',
+      cause: err,
+    })
+  }
 }

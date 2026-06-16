@@ -1,12 +1,14 @@
 import type { Context, MiddlewareHandler } from 'hono'
+import { env } from 'hono/adapter'
 import { getStripeClient } from './runtime'
 import type { StripeEnv, StripeMiddlewareOptions } from './types'
 
 const DEFAULT_SECRET_KEY_VAR = 'STRIPE_SECRET_KEY'
 
 /**
- * Resolve the Stripe secret key from (in order): explicit option,
- * Workers env binding, then `process.env`.
+ * Resolve the Stripe secret key from (in order): explicit option, then the
+ * runtime environment via Hono's `env()` adapter (Workers binding, Node
+ * `process.env`, Bun, Deno, etc.).
  */
 const resolveApiKey = (
   c: Context,
@@ -14,15 +16,7 @@ const resolveApiKey = (
   secretKeyVar: string,
 ): string | undefined => {
   if (options.apiKey) return options.apiKey
-
-  const env = c.env as Record<string, string | undefined> | undefined
-  if (env?.[secretKeyVar]) return env[secretKeyVar]
-
-  if (typeof process !== 'undefined' && process.env?.[secretKeyVar]) {
-    return process.env[secretKeyVar]
-  }
-
-  return undefined
+  return env<Record<string, string | undefined>>(c)[secretKeyVar]
 }
 
 /**

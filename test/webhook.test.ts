@@ -8,7 +8,8 @@ const SECRET = 'whsec_test'
 
 const buildApp = (constructEventAsync: ReturnType<typeof vi.fn>) => {
   const app = new Hono<StripeEnv>()
-  app.onError((err, c) => c.text(err.message, 500))
+  // No onError override: let Hono handle thrown HTTPExceptions natively so the
+  // 400 status from verifyStripeSignature surfaces.
   app.use(async (c, next) => {
     c.set('stripe', { webhooks: { constructEventAsync } } as unknown as Stripe)
     await next()
@@ -51,9 +52,26 @@ describe('verifyStripeSignature', () => {
     })
 
     const res = await app.request('/webhook', { method: 'POST', body: '{}' })
-    expect(res.status).toBe(500)
+    expect(res.status).toBe(400)
     expect(await res.text()).toContain('missing Stripe signature header')
     expect(constructEventAsync).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 (not 500) when signature verification fails', async () => {
+    const constructEventAsync = vi.fn().mockRejectedValue(new Error('No signatures found'))
+    const app = buildApp(constructEventAsync)
+    app.post('/webhook', async (c) => {
+      await verifyStripeSignature(c, { secret: SECRET })
+      return c.body(null, 200)
+    })
+
+    const res = await app.request('/webhook', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'bad_sig' },
+      body: '{}',
+    })
+    expect(res.status).toBe(400)
+    expect(await res.text()).toContain('No signatures found')
   })
 
   it('honors a custom signature header', async () => {

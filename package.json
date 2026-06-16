@@ -40,6 +40,7 @@
   ],
   "author": "hideokamoto",
   "license": "MIT",
+  "packageManager": "pnpm@11.7.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hideokamoto/hono-stripe.git"
