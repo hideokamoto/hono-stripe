@@ -1,3 +1,4 @@
+import { getRuntimeKey } from 'hono/adapter'
 import Stripe from 'stripe'
 import type { StripeMiddlewareOptions } from './types'
 
@@ -11,16 +12,17 @@ import type { StripeMiddlewareOptions } from './types'
 export type StripeClientConfig = NonNullable<ConstructorParameters<typeof Stripe>[1]>
 
 /**
- * True when running on a Node.js runtime (has `process.versions.node`).
+ * True when running on a Node.js runtime.
+ *
+ * Delegates to Hono's `getRuntimeKey()` so this stays consistent with the
+ * runtime detection used by `env()` for secret-key resolution.
  */
-export const isNodeRuntime = (): boolean =>
-  typeof process !== 'undefined' && Boolean(process.versions?.node)
+export const isNodeRuntime = (): boolean => getRuntimeKey() === 'node'
 
 /**
- * True when running on Cloudflare Workers (`navigator.userAgent === 'Cloudflare-Workers'`).
+ * True when running on Cloudflare Workers (`workerd`).
  */
-export const isWorkersRuntime = (): boolean =>
-  typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers'
+export const isWorkersRuntime = (): boolean => getRuntimeKey() === 'workerd'
 
 /**
  * Whether the Stripe SDK should use the Fetch-based HTTP client.
