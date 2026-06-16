@@ -1,15 +1,63 @@
 {
   "name": "hono-stripe",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "version": "0.0.1",
+  "description": "Stripe middleware and helpers for Hono — Stripe client injection, PaymentIntent/Checkout Session helpers, and Webhook signature verification. Works on Cloudflare Workers and Node.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
   },
-  "keywords": [],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm run build"
+  },
+  "keywords": [
+    "hono",
+    "stripe",
+    "middleware",
+    "payment",
+    "cloudflare-workers",
+    "edge",
+    "webhook",
+    "payment-intent",
+    "checkout"
+  ],
   "author": "hideokamoto",
-  "license": "ISC",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hideokamoto/hono-stripe.git"
+  },
+  "homepage": "https://github.com/hideokamoto/hono-stripe#readme",
+  "bugs": {
+    "url": "https://github.com/hideokamoto/hono-stripe/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "hono": ">=4",
+    "stripe": ">=17"
+  },
   "devDependencies": {
+    "@types/node": "^22.10.2",
     "hono": "^4.12.25",
     "stripe": "^22.2.1",
     "tsup": "^8.5.1",
