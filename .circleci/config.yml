@@ -1,0 +1,34 @@
+# Thin delegation stub — all substantive CircleCI YAML lives in
+# hideokamoto/circleci-configurations (no exceptions).
+#
+# Prerequisites before this pipeline can run:
+#   1. Enable "Dynamic config using setup workflows" in
+#      CircleCI Project Settings > Advanced.
+#   2. Set GITHUB_TOKEN (Fine-grained PAT, pull_requests: write) in
+#      CircleCI Project Settings or a Context.
+version: 2.1
+
+setup: true
+
+orbs:
+  continuation: circleci/continuation@1.0.0
+
+jobs:
+  setup:
+    docker:
+      - image: cimg/base:stable
+    resource_class: small
+    steps:
+      - run:
+          name: Fetch pipeline config from circleci-configurations
+          command: |
+            curl -fsSL \
+              "https://raw.githubusercontent.com/hideokamoto/circleci-configurations/main/workflows/validation/bundle-size.yaml" \
+              -o /tmp/continue-config.yml
+      - continuation/continue:
+          configuration_path: /tmp/continue-config.yml
+
+workflows:
+  setup:
+    jobs:
+      - setup
