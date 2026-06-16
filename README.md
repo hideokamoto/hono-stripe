@@ -35,6 +35,13 @@ npm install hono-stripe stripe hono
 
 `stripe` and `hono` are peer dependencies — you bring your own versions.
 
+## Starter template
+
+A runnable full-stack example (Hono + Cloudflare Workers + stripe-pwa-elements UI,
+with both PaymentIntent and Checkout Session flows) lives in
+[`examples/cloudflare-workers`](./examples/cloudflare-workers). Clone, set your
+test keys, `pnpm dev`.
+
 ## Quick start
 
 ### Cloudflare Workers
