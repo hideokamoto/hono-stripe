@@ -1,23 +1,9 @@
-import type { Context, MiddlewareHandler } from 'hono'
+import type { MiddlewareHandler } from 'hono'
 import { env } from 'hono/adapter'
 import { getStripeClient } from './runtime'
 import type { StripeEnv, StripeMiddlewareOptions } from './types'
 
 const DEFAULT_SECRET_KEY_VAR = 'STRIPE_SECRET_KEY'
-
-/**
- * Resolve the Stripe secret key from (in order): explicit option, then the
- * runtime environment via Hono's `env()` adapter (Workers binding, Node
- * `process.env`, Bun, Deno, etc.).
- */
-const resolveApiKey = (
-  c: Context,
-  options: StripeMiddlewareOptions,
-  secretKeyVar: string,
-): string | undefined => {
-  if (options.apiKey) return options.apiKey
-  return env<Record<string, string | undefined>>(c)[secretKeyVar]
-}
 
 /**
  * Hono middleware that initializes a Stripe client and injects it at
@@ -39,14 +25,20 @@ export const stripeMiddleware = (
   options: StripeMiddlewareOptions = {},
 ): MiddlewareHandler<StripeEnv> => {
   const secretKeyVar = options.secretKeyVar ?? DEFAULT_SECRET_KEY_VAR
+  // When apiKey is known at registration time, build the client once and reuse it.
+  const staticStripe = options.apiKey ? getStripeClient(options.apiKey, options) : undefined
   return async (c, next) => {
-    const apiKey = resolveApiKey(c, options, secretKeyVar)
-    if (!apiKey) {
-      throw new Error(
-        `hono-stripe: Stripe secret key not found. Pass { apiKey } or set the "${secretKeyVar}" env binding / process.env value.`,
-      )
+    let stripe = staticStripe
+    if (!stripe) {
+      const apiKey = env<Record<string, string | undefined>>(c)[secretKeyVar]
+      if (!apiKey) {
+        throw new Error(
+          `hono-stripe: Stripe secret key not found. Pass { apiKey } or set the "${secretKeyVar}" env binding / process.env value.`,
+        )
+      }
+      stripe = getStripeClient(apiKey, options)
     }
-    c.set('stripe', getStripeClient(apiKey, options))
+    c.set('stripe', stripe)
     await next()
   }
 }
