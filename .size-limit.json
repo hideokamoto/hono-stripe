@@ -2,11 +2,13 @@
   {
     "name": "ESM (dist/index.js)",
     "path": "dist/index.js",
-    "limit": "2 kB"
+    "limit": "2 kB",
+    "brotli": true
   },
   {
     "name": "CJS (dist/index.cjs)",
     "path": "dist/index.cjs",
-    "limit": "2 kB"
+    "limit": "2 kB",
+    "brotli": true
   }
 ]

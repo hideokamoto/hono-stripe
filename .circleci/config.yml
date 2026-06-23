@@ -1,15 +1,21 @@
 # CircleCI: bundle-size guard for hono-stripe.
 #
 # hono-stripe is meant to stay thin (peer deps only, stripe/hono externalized
-# in tsup). This pipeline builds the package, enforces a gzip/brotli size budget
-# with size-limit (.size-limit.json), and posts the current sizes back to the PR
+# in tsup). This pipeline builds the package, enforces a brotli size budget with
+# size-limit (.size-limit.json), and posts the current sizes back to the PR
 # using the GitHub CLI.
+#
+# The size report is posted to the PR *before* the budget is enforced, so an
+# over-budget PR still gets the report comment and then fails. Commenting is
+# best-effort: missing token (fork PRs) or a transient GitHub error is a warning,
+# never a hard build failure — only the size budget fails the job.
 #
 # Prerequisites (set up once by a maintainer — cannot be done in code):
 #   1. Enable this repository as a CircleCI project (CircleCI GitHub App).
 #   2. Add a GITHUB_TOKEN env var (a PAT with `pull_requests: write` / `repo`)
-#      to the CircleCI project or a context. The github-cli orb authenticates
-#      with it so `gh pr comment` can post the size report.
+#      to the CircleCI project or a context. The gh CLI reads it from the
+#      environment to post the size report. On fork PRs the token is absent and
+#      the comment step is skipped (the size budget is still enforced).
 version: 2.1
 
 orbs:
@@ -33,20 +39,18 @@ jobs:
       - run:
           name: Build
           command: pnpm run build
-      # Size budget gate: fails the job if dist exceeds .size-limit.json limits.
+      # Install gh (no auth here — gh reads GITHUB_TOKEN from the env when set,
+      # so this step is safe even on fork PRs where no token is available).
+      - gh/install
       - run:
-          name: Check bundle size
-          command: pnpm run size
-      # Post the size report to the PR (skipped on non-PR builds).
-      - gh/setup
-      - run:
-          name: Comment bundle size on PR
+          name: Measure bundle size, comment on PR, then enforce budget
           command: |
-            if [ -z "$CIRCLE_PULL_REQUEST" ]; then
-              echo "Not a PR build (CIRCLE_PULL_REQUEST empty) — skipping comment."
-              exit 0
-            fi
-            pnpm exec size-limit --json > size.json
+            # Measure but DON'T abort yet: capture the exit code so we can post
+            # the report before failing on an over-budget PR.
+            SIZE_EXIT=0
+            pnpm exec size-limit --json > size.json || SIZE_EXIT=$?
+
+            # Build the report (also echoed to the build log via tee).
             {
               echo "<!-- size-limit-report -->"
               echo "## 📦 Bundle size (size-limit)"
@@ -54,10 +58,20 @@ jobs:
               echo "| File | Size | Limit | Status |"
               echo "| -- | -- | -- | -- |"
               jq -r '.[] | "| \(.name) | \(.size) B | \(.sizeLimit) B | \(if .passed then "✅" else "❌" end) |"' size.json
-            } > body.md
-            # Update our previous comment in place; create one if none exists yet.
-            gh pr comment "$CIRCLE_PULL_REQUEST" --body-file body.md --edit-last \
-              || gh pr comment "$CIRCLE_PULL_REQUEST" --body-file body.md
+            } | tee body.md
+
+            # Post to the PR — best effort only. Skipped on non-PR builds and on
+            # fork PRs (no token); a transient failure is a warning, not fatal.
+            if [ -n "$CIRCLE_PULL_REQUEST" ] && { [ -n "$GITHUB_TOKEN" ] || [ -n "$GH_TOKEN" ]; }; then
+              gh pr comment "$CIRCLE_PULL_REQUEST" --body-file body.md --edit-last \
+                || gh pr comment "$CIRCLE_PULL_REQUEST" --body-file body.md \
+                || echo "Warning: failed to post the bundle-size comment."
+            else
+              echo "Skipping PR comment (not a PR build, or no GITHUB_TOKEN/GH_TOKEN — e.g. fork PR)."
+            fi
+
+            # Enforce the budget last, so the report is always posted first.
+            exit "$SIZE_EXIT"
 
 workflows:
   bundle-size:
