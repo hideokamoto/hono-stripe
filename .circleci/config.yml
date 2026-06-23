@@ -1,0 +1,65 @@
+# CircleCI: bundle-size guard for hono-stripe.
+#
+# hono-stripe is meant to stay thin (peer deps only, stripe/hono externalized
+# in tsup). This pipeline builds the package, enforces a gzip/brotli size budget
+# with size-limit (.size-limit.json), and posts the current sizes back to the PR
+# using the GitHub CLI.
+#
+# Prerequisites (set up once by a maintainer — cannot be done in code):
+#   1. Enable this repository as a CircleCI project (CircleCI GitHub App).
+#   2. Add a GITHUB_TOKEN env var (a PAT with `pull_requests: write` / `repo`)
+#      to the CircleCI project or a context. The github-cli orb authenticates
+#      with it so `gh pr comment` can post the size report.
+version: 2.1
+
+orbs:
+  gh: circleci/github-cli@2.3.0
+
+jobs:
+  size:
+    docker:
+      - image: cimg/node:22.14
+    steps:
+      - checkout
+      # Match package.json's packageManager (pnpm@11.7.0) exactly.
+      - run:
+          name: Enable pnpm
+          command: |
+            corepack enable
+            corepack prepare pnpm@11.7.0 --activate
+      - run:
+          name: Install dependencies
+          command: pnpm install --frozen-lockfile
+      - run:
+          name: Build
+          command: pnpm run build
+      # Size budget gate: fails the job if dist exceeds .size-limit.json limits.
+      - run:
+          name: Check bundle size
+          command: pnpm run size
+      # Post the size report to the PR (skipped on non-PR builds).
+      - gh/setup
+      - run:
+          name: Comment bundle size on PR
+          command: |
+            if [ -z "$CIRCLE_PULL_REQUEST" ]; then
+              echo "Not a PR build (CIRCLE_PULL_REQUEST empty) — skipping comment."
+              exit 0
+            fi
+            pnpm exec size-limit --json > size.json
+            {
+              echo "<!-- size-limit-report -->"
+              echo "## 📦 Bundle size (size-limit)"
+              echo ""
+              echo "| File | Size | Limit | Status |"
+              echo "| -- | -- | -- | -- |"
+              jq -r '.[] | "| \(.name) | \(.size) B | \(.sizeLimit) B | \(if .passed then "✅" else "❌" end) |"' size.json
+            } > body.md
+            # Update our previous comment in place; create one if none exists yet.
+            gh pr comment "$CIRCLE_PULL_REQUEST" --body-file body.md --edit-last \
+              || gh pr comment "$CIRCLE_PULL_REQUEST" --body-file body.md
+
+workflows:
+  bundle-size:
+    jobs:
+      - size
