@@ -42,6 +42,9 @@
   ],
   "author": "hideokamoto",
   "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
   "packageManager": "pnpm@11.7.0",
   "repository": {
     "type": "git",
