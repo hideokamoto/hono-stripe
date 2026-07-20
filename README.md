@@ -148,6 +148,20 @@ Returns `c.var.stripe`, throwing a clear error if the middleware has not run.
 `isNodeRuntime()`, `isWorkersRuntime()`, `shouldUseFetchHttpClient()` are
 exported for advanced/diagnostic use.
 
+## Bundle size
+
+Staying thin is a feature. CI enforces a [size-limit](https://github.com/ai/size-limit)
+budget on the built artifacts (`.size-limit.json`) and posts the current sizes
+to each PR, so accidental bloat fails the build instead of slipping in. Run it
+locally with:
+
+```sh
+pnpm run size
+```
+
+The library itself adds ~1 kB (brotli) per format; `stripe`/`hono` are peers and
+are not bundled.
+
 ## Upstream plan
 
 `hono-stripe` is built to be proposed to

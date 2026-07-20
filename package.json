@@ -25,6 +25,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "size": "size-limit",
+    "size:json": "size-limit --json",
     "prepublishOnly": "pnpm run build"
   },
   "keywords": [
@@ -58,8 +60,10 @@
     "stripe": ">=17"
   },
   "devDependencies": {
+    "@size-limit/file": "^11.1.6",
     "@types/node": "^22.10.2",
     "hono": "^4.12.25",
+    "size-limit": "^11.1.6",
     "stripe": "^22.2.1",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
