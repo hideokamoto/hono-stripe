@@ -8,11 +8,22 @@ import { getStripe } from './context'
  * If the caller already supplied `options.idempotencyKey` it is preserved
  * untouched; otherwise a freshly generated `crypto.randomUUID()` is used. The
  * caller's object is never mutated — a new object is always returned.
+ *
+ * Throws a clear error (rather than a raw `TypeError`) if `crypto.randomUUID`
+ * is unavailable in the current runtime — pass a stable `options.idempotencyKey`
+ * explicitly in that case instead of relying on auto-generation.
  */
-const withIdempotencyKey = (options?: Stripe.RequestOptions): Stripe.RequestOptions => ({
-  ...options,
-  idempotencyKey: options?.idempotencyKey ?? globalThis.crypto.randomUUID(),
-})
+const withIdempotencyKey = (options?: Stripe.RequestOptions): Stripe.RequestOptions => {
+  if (options?.idempotencyKey) {
+    return { ...options, idempotencyKey: options.idempotencyKey }
+  }
+  if (typeof globalThis.crypto?.randomUUID !== 'function') {
+    throw new Error(
+      'hono-stripe: crypto.randomUUID is not available in this runtime to auto-generate an idempotency key. Pass a stable { idempotencyKey } explicitly.',
+    )
+  }
+  return { ...options, idempotencyKey: globalThis.crypto.randomUUID() }
+}
 
 /**
  * Create a PaymentIntent using the Stripe client on the context.

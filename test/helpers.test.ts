@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type Stripe from 'stripe'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCheckoutSession, createPaymentIntent } from '../src/helpers'
 import { getStripe } from '../src/context'
 import type { StripeEnv } from '../src/types'
@@ -16,6 +16,10 @@ const buildApp = (fakeStripe: unknown) => {
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('createPaymentIntent', () => {
   it('forwards params to stripe.paymentIntents.create and returns the intent', async () => {
@@ -78,6 +82,22 @@ describe('createPaymentIntent', () => {
     const [, options] = create.mock.calls[0]!
     expect(options).not.toBe(originalOptions)
     expect(options.idempotencyKey).toMatch(UUID_RE)
+  })
+
+  it('throws a clear error instead of a raw TypeError when crypto.randomUUID is unavailable', async () => {
+    vi.stubGlobal('crypto', undefined)
+    const create = vi.fn().mockResolvedValue({ client_secret: 'pi_secret' })
+    const app = buildApp({ paymentIntents: { create } })
+    app.onError((err, c) => c.text(err.message, 500))
+    app.post('/', async (c) => {
+      const intent = await createPaymentIntent(c, { amount: 1400, currency: 'usd' })
+      return c.json({ clientSecret: intent.client_secret })
+    })
+
+    const res = await app.request('/', { method: 'POST' })
+    expect(res.status).toBe(500)
+    expect(await res.text()).toContain('crypto.randomUUID')
+    expect(create).not.toHaveBeenCalled()
   })
 })
 
@@ -146,6 +166,22 @@ describe('createCheckoutSession', () => {
     const [, options] = create.mock.calls[0]!
     expect(options).not.toBe(originalOptions)
     expect(options.idempotencyKey).toMatch(UUID_RE)
+  })
+
+  it('throws a clear error instead of a raw TypeError when crypto.randomUUID is unavailable', async () => {
+    vi.stubGlobal('crypto', undefined)
+    const create = vi.fn().mockResolvedValue({ client_secret: 'cs_secret' })
+    const app = buildApp({ checkout: { sessions: { create } } })
+    app.onError((err, c) => c.text(err.message, 500))
+    app.post('/', async (c) => {
+      const session = await createCheckoutSession(c, { ui_mode: 'embedded_page', mode: 'payment' })
+      return c.json({ clientSecret: session.client_secret })
+    })
+
+    const res = await app.request('/', { method: 'POST' })
+    expect(res.status).toBe(500)
+    expect(await res.text()).toContain('crypto.randomUUID')
+    expect(create).not.toHaveBeenCalled()
   })
 })
 
