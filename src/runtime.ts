@@ -129,12 +129,18 @@ const getCacheKey = (apiKey: string, options: StripeMiddlewareOptions): string =
  * Get (or lazily create and cache) a Stripe client for the given secret key
  * and options. The cache is bounded to {@link MAX_CACHE_ENTRIES}; the oldest
  * entry is evicted (FIFO) when the cap would be exceeded.
+ *
+ * `options` is typed as required, but this is also a public entry point that
+ * an untyped JS caller can invoke with `undefined`/`null`. Normalize to `{}`
+ * up front so that never reaches the `WeakMap` used internally, which throws
+ * on a non-object key.
  */
 export const getStripeClient = (apiKey: string, options: StripeMiddlewareOptions): Stripe => {
-  const cacheKey = getCacheKey(apiKey, options)
+  const opts = options ?? {}
+  const cacheKey = getCacheKey(apiKey, opts)
   const cached = clientCache.get(cacheKey)
   if (cached) return cached
-  const client = new Stripe(apiKey, buildConfig(options))
+  const client = new Stripe(apiKey, buildConfig(opts))
   clientCache.set(cacheKey, client)
   if (clientCache.size > MAX_CACHE_ENTRIES) {
     const oldest = clientCache.keys().next().value

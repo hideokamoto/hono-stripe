@@ -40,6 +40,14 @@ describe('getStripeClient cache keying', () => {
     const b = getStripeClient(KEY, {})
     expect(a).toBe(b)
   })
+
+  it('does not throw when called without options (untyped JS caller)', () => {
+    // TypeScript's type system prevents this at compile time, but a JS caller
+    // (no type checking) can still omit `options` or pass `null`. The WeakMap
+    // used internally throws on a non-object key, so this must not reach it.
+    expect(() => getStripeClient(KEY, undefined as unknown as StripeMiddlewareOptions)).not.toThrow()
+    expect(() => getStripeClient(KEY, null as unknown as StripeMiddlewareOptions)).not.toThrow()
+  })
 })
 
 describe('getStripeClient cache eviction', () => {
