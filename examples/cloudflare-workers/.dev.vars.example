@@ -1,0 +1,12 @@
+# Copy this file to `.dev.vars` and fill in your Stripe TEST keys.
+# `.dev.vars` is gitignored. NEVER put live (sk_live_/pk_live_) keys here.
+
+# Secret key (server only) — https://dashboard.stripe.com/test/apikeys
+STRIPE_SECRET_KEY=sk_test_...
+
+# Webhook signing secret — from `stripe listen` or the Dashboard webhook config
+STRIPE_WEBHOOK_SECRET=whsec_...
+
+# Publishable key (sent to the browser). Also set this in wrangler.toml [vars]
+# so it is available in production; here it overrides for local dev.
+STRIPE_PUBLISHABLE_KEY=pk_test_...
