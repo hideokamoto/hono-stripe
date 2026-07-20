@@ -1,10 +1,18 @@
 import { Hono } from 'hono'
 import type Stripe from 'stripe'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { __resetCaches } from '../src/runtime'
 import { verifyStripeSignature } from '../src/webhook'
 import type { StripeEnv } from '../src/types'
 
 const SECRET = 'whsec_test'
+
+// hono/adapter's getRuntimeKey() inspects navigator.userAgent to detect the
+// runtime; faking it lets us exercise the real Workers crypto-provider path.
+const asWorkers = () => vi.stubGlobal('navigator', { userAgent: 'Cloudflare-Workers' })
+
+beforeEach(() => __resetCaches())
+afterEach(() => vi.unstubAllGlobals())
 
 const buildApp = (constructEventAsync: ReturnType<typeof vi.fn>) => {
   const app = new Hono<StripeEnv>()
@@ -40,6 +48,30 @@ describe('verifyStripeSignature', () => {
     expect(signature).toBe('sig_abc')
     expect(secret).toBe(SECRET)
     expect(tolerance).toBeUndefined()
+    // On Node, we omit the crypto provider so stripe-node auto-selects its Node
+    // provider; injecting SubtleCrypto here would needlessly require crypto.subtle.
+    expect(provider).toBeUndefined()
+  })
+
+  it('supplies the SubtleCrypto provider on the Workers runtime', async () => {
+    asWorkers()
+    const event = { id: 'evt_3', type: 'payment_intent.succeeded' }
+    const constructEventAsync = vi.fn().mockResolvedValue(event)
+    const app = buildApp(constructEventAsync)
+    app.post('/webhook', async (c) => {
+      const e = await verifyStripeSignature(c, { secret: SECRET })
+      return c.json({ type: e.type })
+    })
+
+    const res = await app.request('/webhook', {
+      method: 'POST',
+      headers: { 'stripe-signature': 'sig_abc' },
+      body: '{"hello":"world"}',
+    })
+
+    expect(res.status).toBe(200)
+    expect(constructEventAsync).toHaveBeenCalledTimes(1)
+    const provider = constructEventAsync.mock.calls[0]![4]
     expect(provider).toBeDefined() // SubtleCrypto provider for edge runtimes
   })
 

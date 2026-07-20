@@ -2,7 +2,7 @@ import type { Context } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type Stripe from 'stripe'
 import { getStripe } from './context'
-import { getCryptoProvider } from './runtime'
+import { getCryptoProvider, shouldUseFetchHttpClient } from './runtime'
 
 const DEFAULT_SIGNATURE_HEADER = 'stripe-signature'
 
@@ -21,6 +21,11 @@ export interface VerifyStripeSignatureOptions {
  * This is intentionally a thin primitive: it reads the raw body, verifies the
  * signature with `constructEventAsync` (the async form required on Cloudflare
  * Workers, where WebCrypto is async), and returns the `Stripe.Event`.
+ *
+ * The SubtleCrypto provider is only supplied on non-Node (edge) runtimes. On
+ * Node the provider arg is left `undefined` so stripe-node auto-selects its
+ * Node crypto provider — passing SubtleCrypto there would needlessly require a
+ * global `crypto.subtle`.
  *
  * It deliberately does **not** do event routing or per-type dispatch — that is
  * the job of `@kotodayori/hono`, which offers typed webhook routing on top of a
@@ -51,13 +56,19 @@ export const verifyStripeSignature = async (
     })
   }
   const payload = await c.req.text()
+  // Only supply the SubtleCrypto provider on edge runtimes that need it. When
+  // the provider arg is omitted (`undefined`), stripe-node auto-selects the
+  // right one per runtime — its Node crypto provider on Node, SubtleCrypto on
+  // the edge. Forcing SubtleCrypto onto Node would needlessly require a global
+  // `crypto.subtle`, so we let stripe-node pick on Node.
+  const cryptoProvider = shouldUseFetchHttpClient() ? getCryptoProvider() : undefined
   try {
     return await stripe.webhooks.constructEventAsync(
       payload,
       signature,
       options.secret,
       options.tolerance,
-      getCryptoProvider(),
+      cryptoProvider,
     )
   } catch (err) {
     throw new HTTPException(400, {
