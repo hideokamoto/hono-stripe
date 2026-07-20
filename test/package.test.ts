@@ -12,9 +12,8 @@ describe('package.json engines', () => {
   })
 
   it('requires Node >= 20', () => {
-    const node = pkg.engines?.node as string
-    expect(node.trim().length).toBeGreaterThan(0)
-    expect(node).toContain('20')
+    const node = pkg.engines?.node
+    expect(node).toBeTypeOf('string')
     expect(node).toMatch(/>=\s*20/)
   })
 })
