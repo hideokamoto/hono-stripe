@@ -2,8 +2,6 @@ import { Hono } from 'hono'
 import {
   stripeMiddleware,
   getStripe,
-  createPaymentIntent,
-  createCheckoutSession,
   type StripeEnv,
 } from 'hono-stripe'
 import { stripeWebhook, memoryEventStore } from 'hono-stripe/webhook'
@@ -101,11 +99,12 @@ app.get('/return', async (c) => {
 })
 
 // ---------------------------------------------------------------------------
-// Intent / Session creation — hono-stripe helpers.
+// Intent / Session creation — direct Stripe SDK calls on the injected
+// `c.var.stripe` client.
 // ---------------------------------------------------------------------------
 
 app.post('/api/payment-intent', async (c) => {
-  const intent = await createPaymentIntent(c, {
+  const intent = await getStripe(c).paymentIntents.create({
     amount: PRODUCT.amount,
     currency: PRODUCT.currency,
     automatic_payment_methods: { enabled: true },
@@ -118,7 +117,7 @@ app.post('/api/payment-intent', async (c) => {
 })
 
 app.post('/api/checkout-session', async (c) => {
-  const session = await createCheckoutSession(c, {
+  const session = await getStripe(c).checkout.sessions.create({
     // A ui_mode that returns a client_secret to drive the UI yourself (what
     // stripe-pwa-elements consumes). Values differ across Stripe versions —
     // 'embedded_page' here; recent SDKs also add 'custom'.

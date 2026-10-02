@@ -5,7 +5,7 @@ wired through [`hono-stripe`](../../):
 
 | Piece | Module | What it does here |
 | -- | -- | -- |
-| Intent / Session creation | `hono-stripe` | `POST /api/payment-intent`, `POST /api/checkout-session` |
+| Intent / Session creation | `hono-stripe` | `POST /api/payment-intent`, `POST /api/checkout-session` — direct `stripe` SDK calls on the `c.var.stripe` client injected by `stripeMiddleware()` |
 | Webhook receiving | `hono-stripe/webhook` | `POST /api/webhook` — signature verification, typed per-event routing, delivery dedupe |
 | Payment UI | `hono-stripe/ui` | `<stripe-payment-element>` (stripe-pwa-elements) rendered via `hono/jsx` — no React, no frontend build |
 

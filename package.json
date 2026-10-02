@@ -1,7 +1,7 @@
 {
   "name": "hono-stripe",
   "version": "0.1.0",
-  "description": "All-in-one Stripe toolkit for Hono and HonoX — typed client middleware, PaymentIntent/Checkout helpers, verified + typed webhook routing with delivery dedupe, testing fixtures, and JSX payment UI. Works on Cloudflare Workers and Node.",
+  "description": "All-in-one Stripe toolkit for Hono and HonoX — typed client middleware, verified + typed webhook routing with delivery dedupe, testing fixtures, and JSX payment UI. Works on Cloudflare Workers and Node.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

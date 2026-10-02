@@ -21,8 +21,8 @@ import { Card, CardGrid } from '@astrojs/starlight/components'
 <CardGrid>
   <Card title="Client + Payments" icon="seti:json">
     `stripeMiddleware()` injects a configured Stripe client at `c.var.stripe` —
-    with `createFetchHttpClient()` applied automatically on Workers. Helpers
-    create PaymentIntents and Checkout Sessions with idempotency by default.
+    with `createFetchHttpClient()` applied automatically on Workers. `getStripe(c)`
+    hands you the full SDK for PaymentIntents, Checkout Sessions, and everything else.
   </Card>
   <Card title="Webhooks" icon="approve-check">
     `stripeWebhook()` verifies the signature (`constructEventAsync`,

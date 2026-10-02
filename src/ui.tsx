@@ -52,14 +52,15 @@ export const StripeElementsScript: FC<StripeElementsScriptProps> = ({ src }) => 
 export interface StripePaymentFormProps {
   /**
    * Server endpoint (POST) returning `{ clientSecret, publishableKey? }` —
-   * typically backed by `createPaymentIntent` / `createCheckoutSession`.
+   * typically backed by `getStripe(c).paymentIntents.create` /
+   * `getStripe(c).checkout.sessions.create`.
    * Required unless `clientSecret` is given.
    */
   endpoint?: string
   /**
-   * A `client_secret` created during SSR (via `createPaymentIntent` /
-   * `createCheckoutSession` in the same request). When set, no fetch is made
-   * and the secret is rendered as an element attribute directly.
+   * A `client_secret` created during SSR (via `getStripe(c)` in the same
+   * request). When set, no fetch is made and the secret is rendered as an
+   * element attribute directly.
    */
   clientSecret?: string
   /**

@@ -6,7 +6,7 @@ One install covers the whole server-side Stripe integration:
 
 | Module | What you get |
 | -- | -- |
-| `hono-stripe` | Stripe client middleware (`c.var.stripe`), PaymentIntent / Checkout Session helpers with idempotency, raw signature verification |
+| `hono-stripe` | Stripe client middleware (`c.var.stripe`), raw signature verification |
 | `hono-stripe/webhook` | `stripeWebhook` — verify + **typed per-event routing** + delivery dedupe (`KV`, in-memory, or your own store) |
 | `hono-stripe/testing` | Real-signature webhook fixtures for tests and local dev — no `stripe listen` required |
 | `hono-stripe/ui` | hono/jsx (HonoX) components that render a working Payment Element form — no React |
@@ -31,7 +31,7 @@ npm install hono-stripe stripe hono
 import { Hono } from 'hono'
 import {
   stripeMiddleware,
-  createPaymentIntent,
+  getStripe,
   type StripeEnv,
 } from 'hono-stripe'
 import { stripeWebhook, kvEventStore } from 'hono-stripe/webhook'
@@ -51,7 +51,7 @@ app.use(stripeMiddleware())
 app.post('/api/payment-intent', async (c) => {
   // Decide the amount on the server (e.g. from a price id / cart lookup),
   // never trust an amount sent by the client.
-  const intent = await createPaymentIntent(c, { amount: 1400, currency: 'usd' })
+  const intent = await getStripe(c).paymentIntents.create({ amount: 1400, currency: 'usd' })
   return c.json({ clientSecret: intent.client_secret })
 })
 
@@ -88,13 +88,13 @@ STRIPE_WEBHOOK_SECRET=whsec_...
 ```ts
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
-import { stripeMiddleware, createPaymentIntent, type StripeEnv } from 'hono-stripe'
+import { stripeMiddleware, getStripe, type StripeEnv } from 'hono-stripe'
 
 const app = new Hono<StripeEnv>()
 app.use(stripeMiddleware()) // reads process.env.STRIPE_SECRET_KEY
 
 app.post('/api/payment-intent', async (c) => {
-  const intent = await createPaymentIntent(c, { amount: 1400, currency: 'usd' })
+  const intent = await getStripe(c).paymentIntents.create({ amount: 1400, currency: 'usd' })
   return c.json({ clientSecret: intent.client_secret })
 })
 
@@ -212,14 +212,14 @@ app.get('/', (c) =>
 Two modes:
 
 - **`endpoint`**: the browser POSTs to your endpoint and assigns the returned
-  `clientSecret` to the element (works with the `createPaymentIntent` /
-  `createCheckoutSession` helpers above).
+  `clientSecret` to the element (e.g. a PaymentIntent or Checkout Session
+  created via `getStripe(c)` above).
 - **`clientSecret`**: pass a secret created during SSR — rendered as an element
   attribute, no client-side fetch.
 
 ```tsx
 app.get('/', async (c) => {
-  const intent = await createPaymentIntent(c, { amount: 1400, currency: 'usd' })
+  const intent = await getStripe(c).paymentIntents.create({ amount: 1400, currency: 'usd' })
   return c.html(<StripePaymentForm
     clientSecret={intent.client_secret!}
     publishableKey={c.env.STRIPE_PUBLISHABLE_KEY}
@@ -252,19 +252,6 @@ initialized with `Stripe.createFetchHttpClient()`. Clients are cached per key.
 | `secretKeyVar` | `string` | Env / `process.env` key name (default `STRIPE_SECRET_KEY`) |
 | `apiVersion` | `string` | Stripe API version override |
 | `config` | `Stripe.StripeConfig` | Extra config; an explicit `httpClient` here wins |
-
-### `createPaymentIntent(c, params, options?)` / `createCheckoutSession(c, params, options?)`
-
-Thin wrappers over `stripe.paymentIntents.create` /
-`stripe.checkout.sessions.create` that forward params verbatim and set a
-per-call `idempotencyKey` when you don't supply one. To drive the frontend
-with a `client_secret` (the Checkout Sessions mode used by
-stripe-pwa-elements), pass the client-side `ui_mode` for your Stripe version
-(`'custom'` on recent Stripe, `'elements'`/`'embedded_page'` on older SDKs).
-
-For protection against a client *re-submitting* the same logical operation,
-pass a stable `options.idempotencyKey` derived from your business id (cart /
-order id) — the auto-generated key only covers stripe-node's own retries.
 
 ### `verifyStripeSignature(c, { secret, signatureHeader?, tolerance? })`
 

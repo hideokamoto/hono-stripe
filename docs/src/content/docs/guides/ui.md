@@ -27,7 +27,7 @@ app.get('/', (c) =>
 
 // POST /api/payment-intent must return { clientSecret, publishableKey? }
 app.post('/api/payment-intent', async (c) => {
-  const intent = await createPaymentIntent(c, { amount: 1400, currency: 'usd' })
+  const intent = await getStripe(c).paymentIntents.create({ amount: 1400, currency: 'usd' })
   return c.json({ clientSecret: intent.client_secret })
 })
 ```
@@ -38,7 +38,7 @@ Create the secret in the same request and skip the client fetch entirely:
 
 ```tsx
 app.get('/', async (c) => {
-  const intent = await createPaymentIntent(c, { amount: 1400, currency: 'usd' })
+  const intent = await getStripe(c).paymentIntents.create({ amount: 1400, currency: 'usd' })
   return c.html(
     <StripePaymentForm
       clientSecret={intent.client_secret!}
@@ -54,8 +54,8 @@ app.get('/', async (c) => {
 <StripePaymentForm endpoint="/api/checkout-session" intent="checkout" />
 ```
 
-Uses `checkout-session-client-secret` — pair with `createCheckoutSession(c, {
-ui_mode: 'embedded_page', /* or 'custom' on recent SDKs */ ... })`.
+Uses `checkout-session-client-secret` — pair with
+`getStripe(c).checkout.sessions.create({ ui_mode: 'embedded_page', /* or 'custom' on recent SDKs */ ... })`.
 
 ## Props
 

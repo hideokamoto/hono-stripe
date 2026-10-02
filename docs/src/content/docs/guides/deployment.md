@@ -33,7 +33,7 @@ its native HTTP client and crypto provider automatically.
 - **Enable dedupe** for webhook handlers with side effects (mail, provisioning,
   billing state).
 - **Stable idempotency keys** for client-visible operations: pass
-  `options.idempotencyKey` derived from your cart/order id to
-  `createPaymentIntent` / `createCheckoutSession` so double-submits collapse
-  into one Stripe object.
+  `{ idempotencyKey }` derived from your cart/order id to
+  `stripe.paymentIntents.create` / `stripe.checkout.sessions.create` so
+  double-submits collapse into one Stripe object.
 - **Let handler errors return 500** — Stripe retries are the recovery path.
