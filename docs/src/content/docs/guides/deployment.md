@@ -37,3 +37,6 @@ its native HTTP client and crypto provider automatically.
   `stripe.paymentIntents.create` / `stripe.checkout.sessions.create` so
   double-submits collapse into one Stripe object.
 - **Let handler errors return 500** — Stripe retries are the recovery path.
+- **Install `app.onError(stripeErrorHandler())`** — a `StripeCardError` should
+  reach your user as a 402, not a 500, and Stripe auth problems should never
+  leak their raw messages to clients.

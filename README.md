@@ -6,7 +6,7 @@ One install covers the whole server-side Stripe integration:
 
 | Module | What you get |
 | -- | -- |
-| `hono-stripe` | Stripe client middleware (`c.var.stripe`), raw signature verification |
+| `hono-stripe` | Stripe client middleware (`c.var.stripe`), Stripe→HTTP error mapping for `app.onError` |
 | `hono-stripe/webhook` | `stripeWebhook` — verify + **typed per-event routing** + delivery dedupe (`KV`, in-memory, or your own store) |
 | `hono-stripe/testing` | Real-signature webhook fixtures for tests and local dev — no `stripe listen` required |
 | `hono-stripe/ui` | hono/jsx (HonoX) components that render a working Payment Element form — no React |
@@ -32,6 +32,7 @@ import { Hono } from 'hono'
 import {
   stripeMiddleware,
   getStripe,
+  stripeErrorHandler,
   type StripeEnv,
 } from 'hono-stripe'
 import { stripeWebhook, kvEventStore } from 'hono-stripe/webhook'
@@ -43,6 +44,9 @@ type Bindings = {
 }
 
 const app = new Hono<{ Bindings: Bindings } & StripeEnv>()
+
+// Stripe SDK errors → right HTTP statuses (card decline → 402, not 500).
+app.onError(stripeErrorHandler())
 
 // Reads STRIPE_SECRET_KEY from the Workers env binding.
 // On Workers, Stripe.createFetchHttpClient() is applied automatically.
@@ -144,8 +148,9 @@ The Stripe client for verification comes from `c.var.stripe` when
 - A handler that throws surfaces as a `500` via Hono's error handling, so
   Stripe retries — and since dedupe records only after a successful handler,
   retries are processed normally.
-- `verifyStripeSignature(c, { secret })` remains available as the bare
-  primitive if you want a `switch` instead of a router.
+- `verifyStripeSignature(c, { secret })` remains available from
+  `hono-stripe/webhook` as the bare primitive if you want a `switch` instead
+  of a router.
 
 ### `StripeEventStore`
 
@@ -253,11 +258,30 @@ initialized with `Stripe.createFetchHttpClient()`. Clients are cached per key.
 | `apiVersion` | `string` | Stripe API version override |
 | `config` | `Stripe.StripeConfig` | Extra config; an explicit `httpClient` here wins |
 
-### `verifyStripeSignature(c, { secret, signatureHeader?, tolerance? })`
+### `stripeErrorHandler(options?)`
 
-Reads the raw body and verifies it with `constructEventAsync`, returning the
-verified `Stripe.Event`. Throws `HTTPException(400)` on missing/invalid
-signature. Prefer `stripeWebhook` for dispatch + dedupe.
+A Hono `onError` handler that maps Stripe SDK errors to the right HTTP status
+instead of letting every Stripe failure become a `500`:
+
+```ts
+import { stripeErrorHandler } from 'hono-stripe'
+
+app.onError(stripeErrorHandler())
+```
+
+| Stripe error | Status | Notes |
+| -- | -- | -- |
+| `StripeCardError` | 402 | passes `decline_code` through — safe for users |
+| `StripeInvalidRequestError`, `TemporarySessionExpiredError` | 400 | |
+| `StripeSignatureVerificationError` | 400 | details not leaked |
+| `StripeIdempotencyError` | 409 | |
+| `StripeRateLimitError` | 429 | |
+| `StripeConnectionError`, `StripeAPIError` | 502 | upstream failure — safe to retry |
+| `StripeAuthenticationError`, `StripePermissionError` | 500 | generic message — never leaks key details |
+| Other `StripeError` with 4xx `statusCode` | that status | |
+| Other `StripeError` | 502 | |
+| `HTTPException` | untouched | pass-through |
+| Anything else | 500 | or `options.fallback(err, c)` |
 
 ### `getStripe(c)`
 

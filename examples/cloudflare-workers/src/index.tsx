@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import {
   stripeMiddleware,
   getStripe,
+  stripeErrorHandler,
   type StripeEnv,
 } from 'hono-stripe'
 import { stripeWebhook, memoryEventStore } from 'hono-stripe/webhook'
@@ -25,6 +26,11 @@ const PRODUCT = {
   amount: 1400, // $14.00, in the smallest currency unit
   currency: 'usd',
 } as const
+
+// Map Stripe SDK errors to HTTP statuses — card declines reach the user as
+// 402 (with decline_code), upstream Stripe outages as 502, and auth problems
+// as a sanitized 500 that never leaks key details.
+app.onError(stripeErrorHandler())
 
 // Inject `c.var.stripe` for the API routes and the post-checkout return page.
 // On Workers the middleware applies Stripe.createFetchHttpClient() automatically.

@@ -20,7 +20,7 @@ versions.
 
 | Import | Purpose |
 | -- | -- |
-| `hono-stripe` | Client middleware (`c.var.stripe`) + `getStripe` context accessor |
+| `hono-stripe` | Client middleware (`c.var.stripe`) + `getStripe` + `stripeErrorHandler` for `app.onError` |
 | `hono-stripe/webhook` | `stripeWebhook` — verify, typed routing, delivery dedupe |
 | `hono-stripe/testing` | Signed webhook fixtures for tests and local dev |
 | `hono-stripe/ui` | hono/jsx components that render a Payment Element form |
@@ -29,10 +29,14 @@ versions.
 
 ```ts
 import { Hono } from 'hono'
-import { stripeMiddleware, getStripe, type StripeEnv } from 'hono-stripe'
+import { stripeMiddleware, getStripe, stripeErrorHandler, type StripeEnv } from 'hono-stripe'
 import { stripeWebhook } from 'hono-stripe/webhook'
 
 const app = new Hono<StripeEnv>()
+
+// Map Stripe SDK errors to the right HTTP statuses (card errors → 402,
+// rate limits → 429, upstream failures → 502) instead of blanket 500s.
+app.onError(stripeErrorHandler())
 
 // Reads STRIPE_SECRET_KEY from the env binding / process.env.
 // On Workers, Stripe.createFetchHttpClient() is applied automatically.
