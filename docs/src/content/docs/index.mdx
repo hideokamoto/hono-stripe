@@ -1,0 +1,42 @@
+---
+title: hono-stripe
+description: All-in-one Stripe toolkit for Hono and HonoX.
+template: splash
+hero:
+  tagline: Client middleware, typed webhook routing, testing fixtures, and a no-React payment UI — one install, every runtime.
+  actions:
+    - text: Get started
+      link: /getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/hideokamoto/hono-stripe
+      icon: external
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components'
+
+## One install, four layers
+
+<CardGrid>
+  <Card title="Client + Payments" icon="seti:json">
+    `stripeMiddleware()` injects a configured Stripe client at `c.var.stripe` —
+    with `createFetchHttpClient()` applied automatically on Workers. Helpers
+    create PaymentIntents and Checkout Sessions with idempotency by default.
+  </Card>
+  <Card title="Webhooks" icon="approve-check">
+    `stripeWebhook()` verifies the signature (`constructEventAsync`,
+    edge-safe), dispatches to **typed per-event handlers**, and dedupes Stripe
+    retries via KV, memory, or your own store.
+  </Card>
+  <Card title="Testing" icon="seti:config">
+    `createWebhookRequest()` produces **real** HMAC signatures with WebCrypto —
+    exercise the full verify → route → dedupe path in vitest, no
+    `stripe listen`, no network.
+  </Card>
+  <Card title="Payment UI" icon="puzzle">
+    `StripePaymentForm` renders a working Payment Element via
+    stripe-pwa-elements web components — server-rendered from hono/jsx or
+    HonoX, no React, no frontend build step.
+  </Card>
+</CardGrid>

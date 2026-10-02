@@ -1,7 +1,11 @@
 packages:
   - examples/*
+  - docs
 
 allowBuilds:
   esbuild: true
   sharp: false
   workerd: true
+
+minimumReleaseAgeExclude:
+  - '@astrojs/starlight@0.42.5'

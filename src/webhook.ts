@@ -27,9 +27,8 @@ export interface VerifyStripeSignatureOptions {
  * Node crypto provider — passing SubtleCrypto there would needlessly require a
  * global `crypto.subtle`.
  *
- * It deliberately does **not** do event routing or per-type dispatch — that is
- * the job of `@kotodayori/hono`, which offers typed webhook routing on top of a
- * verified event. Reach for that when you outgrow this primitive.
+ * For typed per-event routing and delivery deduplication on top of this
+ * primitive, use the `stripeWebhook` middleware from `hono-stripe/webhook`.
  *
  * @throws {HTTPException} 400 if the signature header is missing or
  * verification fails — the correct response to Stripe (a 500 would make Stripe
@@ -39,16 +38,26 @@ export interface VerifyStripeSignatureOptions {
  * ```ts
  * app.post('/api/webhook', async (c) => {
  *   const event = await verifyStripeSignature(c, { secret: c.env.STRIPE_WEBHOOK_SECRET })
- *   // hand `event` to @kotodayori/hono for typed routing, or switch on event.type
+ *   // switch on event.type, or use `hono-stripe/webhook`'s stripeWebhook for typed routing
  *   return c.body(null, 200)
  * })
  * ```
  */
-export const verifyStripeSignature = async (
+export const verifyStripeSignature = (
+  c: Context,
+  options: VerifyStripeSignatureOptions,
+): Promise<Stripe.Event> => constructVerifiedEvent(getStripe(c), c, options)
+
+/**
+ * Verify the request signature against `payload` using the given Stripe client.
+ * Shared by {@link verifyStripeSignature} and the `stripeWebhook` router.
+ * @internal
+ */
+export const constructVerifiedEvent = async (
+  stripe: Stripe,
   c: Context,
   options: VerifyStripeSignatureOptions,
 ): Promise<Stripe.Event> => {
-  const stripe = getStripe(c)
   const signature = c.req.header(options.signatureHeader ?? DEFAULT_SIGNATURE_HEADER)
   if (!signature) {
     throw new HTTPException(400, {

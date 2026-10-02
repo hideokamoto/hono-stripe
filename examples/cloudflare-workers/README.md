@@ -1,13 +1,13 @@
 # hono-stripe — Cloudflare Workers starter
 
-A minimal, full-stack Stripe payment app on **Hono + Cloudflare Workers**, wiring
-together the three layers of the Hono × Stripe stack:
+A minimal, full-stack Stripe payment app on **Hono + Cloudflare Workers**, all
+wired through [`hono-stripe`](../../):
 
-| Layer | Package | What it does here |
+| Piece | Module | What it does here |
 | -- | -- | -- |
-| Intent / Session creation | [`hono-stripe`](../../) | `POST /api/payment-intent`, `POST /api/checkout-session` |
-| Webhook receiving | [`hono-stripe`](../../) → [`@kotodayori/hono`](https://www.npmjs.com/package/@kotodayori/hono) | `POST /api/webhook` (signature verification; typed routing via kotodayori) |
-| Payment UI | [stripe-pwa-elements](https://github.com/stripe/stripe-pwa-elements) | `<stripe-payment-element>` served via `hono/jsx` — no React, no frontend build |
+| Intent / Session creation | `hono-stripe` | `POST /api/payment-intent`, `POST /api/checkout-session` |
+| Webhook receiving | `hono-stripe/webhook` | `POST /api/webhook` — signature verification, typed per-event routing, delivery dedupe |
+| Payment UI | `hono-stripe/ui` | `<stripe-payment-element>` (stripe-pwa-elements) rendered via `hono/jsx` — no React, no frontend build |
 
 Two payment flows are included: **Payment Element** (PaymentIntent, on `/`) and
 **Checkout Session** (`/checkout`).
@@ -39,6 +39,9 @@ stripe listen --forward-to localhost:8787/api/webhook
 
 Copy the `whsec_...` it prints into `STRIPE_WEBHOOK_SECRET` in `.dev.vars`.
 
+For unit tests instead of live events, `hono-stripe/testing` can generate
+requests with real signatures — see the main README.
+
 ## Deploy
 
 ```sh
@@ -55,3 +58,7 @@ pnpm deploy
   published `hono-stripe` from npm.
 - `compatibility_flags = ["nodejs_compat"]` is enabled for the Stripe SDK. On
   Workers, `hono-stripe` applies `Stripe.createFetchHttpClient()` automatically.
+- The example dedupes webhook deliveries with `memoryEventStore` (per-isolate,
+  dev-grade). For production back it with Workers KV:
+  `dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS)` with a
+  `[[kv_namespaces]]` binding.

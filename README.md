@@ -1,46 +1,27 @@
 # hono-stripe
 
-> Stripe middleware and helpers for [Hono](https://hono.dev) — works on Cloudflare Workers and Node.
+> The all-in-one Stripe toolkit for [Hono](https://hono.dev) and HonoX — works on Cloudflare Workers and Node.
 
-`hono-stripe` injects a configured Stripe client into your Hono context and gives
-you thin helpers for the two things a payment backend needs first: creating a
-**PaymentIntent / Checkout Session** (to hand a `client_secret` to the frontend)
-and **verifying webhook signatures**. It handles the edge-runtime gotchas
-(`createFetchHttpClient`, async webhook verification) for you.
+One install covers the whole server-side Stripe integration:
 
-> **Status:** early development (`0.0.1`). The goal is to upstream this as
-> `@hono/stripe` to [honojs/middleware](https://github.com/honojs/middleware)
-> once it has proven itself — see [Upstream plan](#upstream-plan). The current
-> maintainer intends to keep maintaining it through and after that move.
+| Module | What you get |
+| -- | -- |
+| `hono-stripe` | Stripe client middleware (`c.var.stripe`), PaymentIntent / Checkout Session helpers with idempotency, raw signature verification |
+| `hono-stripe/webhook` | `stripeWebhook` — verify + **typed per-event routing** + delivery dedupe (`KV`, in-memory, or your own store) |
+| `hono-stripe/testing` | Real-signature webhook fixtures for tests and local dev — no `stripe listen` required |
+| `hono-stripe/ui` | hono/jsx (HonoX) components that render a working Payment Element form — no React |
 
-## Where it fits — the 3 layers
+It handles the edge-runtime gotchas for you (`createFetchHttpClient`, async
+webhook verification via WebCrypto) and keeps `stripe`/`hono` as peer
+dependencies — you bring your own versions.
 
-A full Hono + Stripe stack is three small pieces, each owning one job:
-
-| Layer | Package | Responsibility |
-| -- | -- | -- |
-| **Backend — client + intent/session** | **`hono-stripe`** (this) | Inject `c.var.stripe`; create PaymentIntents / Checkout Sessions; verify webhook signatures |
-| Backend — webhook routing | [`@kotodayori/hono`](https://www.npmjs.com/package/@kotodayori/hono) | Typed, per-event webhook routing on top of a verified event |
-| Frontend — payment UI | [stripe-pwa-elements](https://github.com/stripe/stripe-pwa-elements) | `<stripe-payment-element>` web components (no React required) |
-
-`hono-stripe` deliberately stops at **verifying** the webhook. Event dispatch /
-typed routing is the job of `@kotodayori/hono` — reach for it when you outgrow
-the primitive here.
+> **Status:** early development (`0.x`). API may change between minor versions.
 
 ## Install
 
 ```sh
 npm install hono-stripe stripe hono
 ```
-
-`stripe` and `hono` are peer dependencies — you bring your own versions.
-
-## Starter template
-
-A runnable full-stack example (Hono + Cloudflare Workers + stripe-pwa-elements UI,
-with both PaymentIntent and Checkout Session flows) lives in
-[`examples/cloudflare-workers`](./examples/cloudflare-workers). Clone, set your
-test keys, `pnpm dev`.
 
 ## Quick start
 
@@ -51,11 +32,15 @@ import { Hono } from 'hono'
 import {
   stripeMiddleware,
   createPaymentIntent,
-  verifyStripeSignature,
   type StripeEnv,
 } from 'hono-stripe'
+import { stripeWebhook, kvEventStore } from 'hono-stripe/webhook'
 
-type Bindings = { STRIPE_SECRET_KEY: string; STRIPE_WEBHOOK_SECRET: string }
+type Bindings = {
+  STRIPE_SECRET_KEY: string
+  STRIPE_WEBHOOK_SECRET: string
+  STRIPE_EVENTS: KVNamespace
+}
 
 const app = new Hono<{ Bindings: Bindings } & StripeEnv>()
 
@@ -70,11 +55,23 @@ app.post('/api/payment-intent', async (c) => {
   return c.json({ clientSecret: intent.client_secret })
 })
 
-app.post('/api/webhook', async (c) => {
-  const event = await verifyStripeSignature(c, { secret: c.env.STRIPE_WEBHOOK_SECRET })
-  // Hand `event` to @kotodayori/hono for typed routing, or switch on event.type.
-  return c.body(null, 200)
-})
+// Verify + route + dedupe in one middleware. `event.data.object` is typed
+// per event name — the stripe SDK discriminates events by `type`.
+app.post(
+  '/api/webhook',
+  stripeWebhook({
+    // c.env only exists at request time — resolve the store lazily per request.
+    dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS),
+    on: {
+      'payment_intent.succeeded': (event) => {
+        console.log('paid', event.data.object.id) // Stripe.PaymentIntent
+      },
+      'checkout.session.completed': async (event) => {
+        await fulfillOrder(event.data.object)     // Stripe.Checkout.Session
+      },
+    },
+  }),
+)
 
 export default app
 ```
@@ -104,7 +101,138 @@ app.post('/api/payment-intent', async (c) => {
 serve(app)
 ```
 
-## API
+## Webhooks — `hono-stripe/webhook`
+
+`stripeWebhook` composes the three things every Stripe webhook endpoint needs:
+
+1. **Verify** — `constructEventAsync` (async WebCrypto, Workers-safe). Missing
+   or bad signatures get a `400`, not a `500`, so Stripe doesn't retry
+   invalid requests.
+2. **Route** — handlers keyed by event type, with `event.data.object` narrowed
+   to the concrete resource type for every event type the SDK knows.
+3. **Dedupe** — Stripe retries deliveries for up to ~3 days. Pass a store to
+   acknowledge repeat deliveries without re-running the handler.
+
+```ts
+import { stripeWebhook, memoryEventStore, kvEventStore } from 'hono-stripe/webhook'
+
+app.post('/webhook', stripeWebhook({
+  // Secret resolution order: `secret` (string or (c) => string) →
+  // env binding / process.env[webhookSecretVar] (default STRIPE_WEBHOOK_SECRET)
+  secret: (c) => c.env.STRIPE_WEBHOOK_SECRET,
+
+  // Or a plain store: memoryEventStore() for dev / single-isolate Node.
+  dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS),
+
+  on: {
+    'customer.subscription.deleted': async (event, c) => {
+      await downgrade(event.data.object.customer)
+    },
+  },
+
+  // Optional: override the default 200 for verified-but-unhandled events.
+  onUnhandled: (event, c) => c.json({ ignored: event.type }),
+}))
+```
+
+The Stripe client for verification comes from `c.var.stripe` when
+`stripeMiddleware()` has run; otherwise `stripeWebhook` builds one from
+`apiKey` / `STRIPE_SECRET_KEY` (verification is local HMAC — no API call).
+
+- A handler may `return c.json(...)` / `Response` (sent verbatim) or return
+  nothing (`200 { received: true }`).
+- A handler that throws surfaces as a `500` via Hono's error handling, so
+  Stripe retries — and since dedupe records only after a successful handler,
+  retries are processed normally.
+- `verifyStripeSignature(c, { secret })` remains available as the bare
+  primitive if you want a `switch` instead of a router.
+
+### `StripeEventStore`
+
+Bring your own backend (D1, Upstash, DB) by implementing two methods:
+
+```ts
+interface StripeEventStore {
+  has(eventId: string): Promise<boolean>
+  put(eventId: string, ttlSeconds: number): Promise<void>
+}
+```
+
+`memoryEventStore()` (in-process) and `kvEventStore(namespace)` (Workers KV,
+auto-expiring keys) are provided. Default retention is 3 days.
+
+## Testing — `hono-stripe/testing`
+
+Webhook signatures are just HMAC-SHA256 over `${timestamp}.${payload}`. This
+module produces **real** signatures with WebCrypto, so they verify against the
+actual Stripe SDK on every runtime — run the full verify → route → dedupe path
+in `vitest` without `stripe listen` or network access.
+
+```ts
+import { Hono } from 'hono'
+import { stripeWebhook } from 'hono-stripe/webhook'
+import { createTestEvent, createWebhookRequest } from 'hono-stripe/testing'
+
+const app = new Hono().post('/webhook', stripeWebhook({
+  apiKey: 'sk_test_x',
+  secret: 'whsec_test',
+  on: { 'payment_intent.succeeded': handler },
+}))
+
+const res = await app.request(await createWebhookRequest(
+  createTestEvent('payment_intent.succeeded', { id: 'pi_1', amount: 1400 }),
+  { secret: 'whsec_test' },
+))
+expect(res.status).toBe(200)
+```
+
+| Export | Purpose |
+| -- | -- |
+| `signStripePayload(payload, secret, timestamp?)` | `t=...,v1=...` header value; backdate `timestamp` to test tolerance handling |
+| `createTestEvent(type, object, options?)` | `Stripe.Event`-shaped fixture around your `data.object` |
+| `createWebhookRequest(event \| payload, { secret, url?, timestamp? })` | `Request` with a valid signature, ready for `app.request()` or `fetch` |
+
+## Payment UI — `hono-stripe/ui`
+
+Server-render a working [stripe-pwa-elements](https://github.com/stripe/stripe-pwa-elements)
+`<stripe-payment-element>` from hono/jsx or HonoX — no React, no frontend build
+step. The component code loads from a CDN as an ES module.
+
+```tsx
+import { StripePaymentForm } from 'hono-stripe/ui'
+
+app.get('/', (c) =>
+  c.html(<StripePaymentForm
+    endpoint="/api/payment-intent"   // POST → { clientSecret, publishableKey? }
+    publishableKey={c.env.STRIPE_PUBLISHABLE_KEY}
+  />)
+)
+```
+
+Two modes:
+
+- **`endpoint`**: the browser POSTs to your endpoint and assigns the returned
+  `clientSecret` to the element (works with the `createPaymentIntent` /
+  `createCheckoutSession` helpers above).
+- **`clientSecret`**: pass a secret created during SSR — rendered as an element
+  attribute, no client-side fetch.
+
+```tsx
+app.get('/', async (c) => {
+  const intent = await createPaymentIntent(c, { amount: 1400, currency: 'usd' })
+  return c.html(<StripePaymentForm
+    clientSecret={intent.client_secret!}
+    publishableKey={c.env.STRIPE_PUBLISHABLE_KEY}
+  />)
+})
+```
+
+`intent="checkout"` switches to Checkout Session mode
+(`checkout-session-client-secret`). `StripeElementsScript` (the `<script
+type="module">` loader) is rendered automatically; pass `src` to self-host
+instead of using the CDN.
+
+## API — `hono-stripe`
 
 ### `stripeMiddleware(options?)`
 
@@ -128,16 +256,21 @@ initialized with `Stripe.createFetchHttpClient()`. Clients are cached per key.
 ### `createPaymentIntent(c, params, options?)` / `createCheckoutSession(c, params, options?)`
 
 Thin wrappers over `stripe.paymentIntents.create` /
-`stripe.checkout.sessions.create` that forward params verbatim. To drive the
-frontend with a `client_secret` (the Checkout Sessions mode used by
+`stripe.checkout.sessions.create` that forward params verbatim and set a
+per-call `idempotencyKey` when you don't supply one. To drive the frontend
+with a `client_secret` (the Checkout Sessions mode used by
 stripe-pwa-elements), pass the client-side `ui_mode` for your Stripe version
-(`'custom'` on recent Stripe, `'elements'` on older SDKs).
+(`'custom'` on recent Stripe, `'elements'`/`'embedded_page'` on older SDKs).
+
+For protection against a client *re-submitting* the same logical operation,
+pass a stable `options.idempotencyKey` derived from your business id (cart /
+order id) — the auto-generated key only covers stripe-node's own retries.
 
 ### `verifyStripeSignature(c, { secret, signatureHeader?, tolerance? })`
 
-Reads the raw body and verifies it with `constructEventAsync` (the async form
-required where WebCrypto is async, e.g. Workers), returning the verified
-`Stripe.Event`. Throws if the signature header is missing or invalid.
+Reads the raw body and verifies it with `constructEventAsync`, returning the
+verified `Stripe.Event`. Throws `HTTPException(400)` on missing/invalid
+signature. Prefer `stripeWebhook` for dispatch + dedupe.
 
 ### `getStripe(c)`
 
@@ -148,27 +281,30 @@ Returns `c.var.stripe`, throwing a clear error if the middleware has not run.
 `isNodeRuntime()`, `isWorkersRuntime()`, `shouldUseFetchHttpClient()` are
 exported for advanced/diagnostic use.
 
+## Starter template
+
+A runnable full-stack example (Hono + Cloudflare Workers + Payment Element UI,
+with both PaymentIntent and Checkout Session flows) lives in
+[`examples/cloudflare-workers`](./examples/cloudflare-workers). Clone, set your
+test keys, `pnpm dev`.
+
+## Documentation
+
+The docs site lives in [`docs/`](./docs) (Starlight + TypeDoc, deployed to
+Cloudflare Workers Static Assets). Run it locally with `pnpm -C docs dev`; see
+[`docs/README.md`](./docs/README.md) for build/deploy details.
+
 ## Bundle size
 
-Staying thin is a feature. CI enforces a [size-limit](https://github.com/ai/size-limit)
-budget on the built artifacts (`.size-limit.json`) and posts the current sizes
-to each PR, so accidental bloat fails the build instead of slipping in. Run it
-locally with:
+Staying thin is a feature. CI enforces a
+[size-limit](https://github.com/ai/size-limit) budget per entry point
+(`.size-limit.json`) and posts the current sizes to each PR. `stripe`/`hono`
+are peers and are never bundled. The browser-side payment components load from
+a CDN, so they're not in your server bundle either.
 
 ```sh
 pnpm run size
 ```
-
-The library itself adds ~1 kB (brotli) per format; `stripe`/`hono` are peers and
-are not bundled.
-
-## Upstream plan
-
-`hono-stripe` is built to be proposed to
-[honojs/middleware](https://github.com/honojs/middleware) as `@hono/stripe`.
-To keep that path open it depends on **`stripe` and `hono` as peers only** — no
-other runtime dependencies. If the proposal is accepted, `hono-stripe` will be
-deprecated with a pointer to `@hono/stripe`.
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "name": "hono-stripe",
-  "version": "0.0.1",
-  "description": "Stripe middleware and helpers for Hono — Stripe client injection, PaymentIntent/Checkout Session helpers, and Webhook signature verification. Works on Cloudflare Workers and Node.",
+  "version": "0.1.0",
+  "description": "All-in-one Stripe toolkit for Hono and HonoX — typed client middleware, PaymentIntent/Checkout helpers, verified + typed webhook routing with delivery dedupe, testing fixtures, and JSX payment UI. Works on Cloudflare Workers and Node.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -11,6 +11,21 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./webhook": {
+      "types": "./dist/webhooks.d.ts",
+      "import": "./dist/webhooks.js",
+      "require": "./dist/webhooks.cjs"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "import": "./dist/testing.js",
+      "require": "./dist/testing.cjs"
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "import": "./dist/ui.js",
+      "require": "./dist/ui.cjs"
     }
   },
   "files": [
@@ -27,18 +42,24 @@
     "test:watch": "vitest",
     "size": "size-limit",
     "size:json": "size-limit --json",
+    "docs:dev": "pnpm -C docs dev",
+    "docs:build": "pnpm -C docs build",
+    "docs:deploy": "pnpm -C docs deploy",
     "prepublishOnly": "pnpm run build"
   },
   "keywords": [
     "hono",
+    "honox",
     "stripe",
     "middleware",
     "payment",
     "cloudflare-workers",
     "edge",
     "webhook",
+    "web-components",
     "payment-intent",
-    "checkout"
+    "checkout",
+    "testing"
   ],
   "author": "hideokamoto",
   "license": "MIT",

@@ -4,3 +4,6 @@ dist/
 .dev.vars
 .env
 .wrangler/
+.astro/
+# TypeDoc-generated API pages (rebuilt on every docs build)
+docs/src/content/docs/api/
