@@ -92,6 +92,22 @@ describe('stripeCart — merge (spec/alloy/cart_link.als)', () => {
     await cart.merge(c, 'sess_anon')
     expect(await cart.items(c)).toEqual([{ priceId: 'p1', quantity: 9, addedAt: 300 }])
   })
+
+  it('addedAt tie resolves to the source line', async () => {
+    const store = memoryCartStore()
+    const cart = setup('u1', store)
+    await store.put('sess_anon', { priceId: 'p1', quantity: 9, addedAt: 200 })
+    await store.put('u1', { priceId: 'p1', quantity: 1, addedAt: 200 })
+    await cart.merge(c, 'sess_anon')
+    expect(await cart.items(c)).toEqual([{ priceId: 'p1', quantity: 9, addedAt: 200 }])
+  })
+
+  it('self-merge is a no-op, not a cart wipe', async () => {
+    const cart = setup()
+    await cart.set(c, 'p1', 2)
+    expect(await cart.merge(c, 'u1')).toEqual({ merged: 0 })
+    expect(await cart.items(c)).toEqual([expect.objectContaining({ priceId: 'p1' })])
+  })
 })
 
 describe('stripeCart — checkout + drain (spec/quint/cart_ops.qnt)', () => {
@@ -109,6 +125,19 @@ describe('stripeCart — checkout + drain (spec/quint/cart_ops.qnt)', () => {
 
   it('refuses checkout on an empty cart (Alloy: EmptyCheckout)', async () => {
     await expect(setup().checkout(c)).rejects.toThrow(/empty/i)
+  })
+
+  it('refuses checkout when the cart owner id is unresolvable (Alloy: OrphanCheckout)', async () => {
+    const cart = stripeCart({ store: memoryCartStore(), user: () => '' })
+    await cart.set(c, 'price_a', 1)
+    await expect(cart.checkout(c)).rejects.toThrow(/owner/i)
+  })
+
+  it('supports an async user resolver', async () => {
+    const cart = stripeCart({ store: memoryCartStore(), user: async () => 'u_async' })
+    await cart.set(c, 'price_a', 1)
+    const { params } = await cart.checkout(c)
+    expect(params.client_reference_id).toBe('u_async')
   })
 
   it('options.params merge last into the session params', async () => {
@@ -181,5 +210,57 @@ describe('stripeCart — webhook handlers', () => {
     await cart.handlers['checkout.session.completed']?.(sessionEvent('subscription', 'u1'), wc)
     expect(stripe.checkout.sessions.listLineItems).not.toHaveBeenCalled()
     expect(await store.list('u1')).toHaveLength(1)
+  })
+
+  it('ignores sessions without client_reference_id', async () => {
+    const store = memoryCartStore()
+    const cart = setup('u1', store)
+    await store.put('u1', { priceId: 'p1', quantity: 2, addedAt: 1 })
+    const stripe = {
+      checkout: { sessions: { listLineItems: vi.fn() } },
+    } as unknown as Stripe
+    const wc = { get: () => stripe } as never
+
+    await cart.handlers['checkout.session.completed']?.(sessionEvent('payment', null), wc)
+    expect(stripe.checkout.sessions.listLineItems).not.toHaveBeenCalled()
+    expect(await store.list('u1')).toHaveLength(1)
+  })
+
+  it('throws when no Stripe client is on context', async () => {
+    const cart = setup()
+    const wc = { get: () => undefined } as never
+    await expect(
+      cart.handlers['checkout.session.completed']?.(sessionEvent('payment', 'u1'), wc),
+    ).rejects.toThrow(/no Stripe client/)
+  })
+
+  it('drains across listLineItems pages', async () => {
+    const store = memoryCartStore()
+    const cart = setup('u1', store)
+    await store.put('u1', { priceId: 'p1', quantity: 1, addedAt: 1 })
+    await store.put('u1', { priceId: 'p2', quantity: 1, addedAt: 1 })
+    await store.put('u1', { priceId: 'p3', quantity: 1, addedAt: 1 })
+    const listLineItems = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: [{ id: 'li_1', price: { id: 'p1' }, quantity: 1 }],
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        data: [{ id: 'li_2', price: { id: 'p2' }, quantity: 1 }],
+        has_more: false,
+      })
+    const stripe = {
+      checkout: { sessions: { listLineItems } },
+    } as unknown as Stripe
+    const wc = { get: () => stripe } as never
+
+    await cart.handlers['checkout.session.completed']?.(sessionEvent('payment', 'u1'), wc)
+    expect(listLineItems).toHaveBeenCalledTimes(2)
+    expect(listLineItems).toHaveBeenNthCalledWith(2, 'cs_1', {
+      limit: 100,
+      starting_after: 'li_1',
+    })
+    expect(await store.list('u1')).toEqual([{ priceId: 'p3', quantity: 1, addedAt: 1 }])
   })
 })

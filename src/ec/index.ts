@@ -25,8 +25,6 @@ export interface StripeCartOptions {
    * OrphanCheckout).
    */
   user: (c: Context) => string | Promise<string>
-  /** Sink for anomaly warnings (e.g. truncated drain). Default: console.warn. */
-  warn?: (message: string) => void
 }
 
 export interface StripeCart {
@@ -49,14 +47,21 @@ export interface StripeCart {
    * request's cart — the login merge required by Alloy `TwoCartsOneUser`.
    * On a shared priceId the line with the newer `addedAt` wins; a tie goes
    * to the source (`MergeConflict`). The source cart is cleared.
+   *
+   * Boundary (same class as the stale-charge hazard): a write landing on
+   * the source cart between the enumerate and the delete is neither merged
+   * nor removed — it is stranded on an abandoned cart id. Merging is a
+   * login-time operation; quiescent carts make this vanishingly rare.
    */
   merge: (c: Context, fromCartId: string) => Promise<{ merged: number }>
   /**
    * Snapshot the visible lines into Stripe Checkout params
-   * (`mode: 'payment'`). Throws on an empty cart (Alloy: EmptyCheckout).
+   * (`mode: 'payment'`). Throws on an empty cart (Alloy: EmptyCheckout)
+   * and on an unresolvable cart owner — a session without
+   * `client_reference_id` could charge but never drain (OrphanCheckout).
    * The cart id is stamped as `client_reference_id` so the session
-   * resolves to its owner (Alloy: OrphanCheckout) and `handlers` can drain
-   * the right cart on completion.
+   * resolves to its owner and `handlers` can drain the right cart on
+   * completion.
    */
   checkout: (c: Context, options?: CartCheckoutOptions) => Promise<CartCheckout>
   /**
@@ -75,8 +80,6 @@ export interface StripeCart {
 }
 
 export const stripeCart = (options: StripeCartOptions): StripeCart => {
-  const warn = options.warn ?? ((m: string) => console.warn(m))
-
   const storeOf = (c: Context): CartStore => resolveCartStore(options.store, c)
   const cartIdOf = (c: Context): Promise<string> => Promise.resolve(options.user(c))
   const addedAtNow = () => Math.floor(Date.now() / 1000)
@@ -91,19 +94,21 @@ export const stripeCart = (options: StripeCartOptions): StripeCart => {
       if (!stripe) {
         throw new Error('hono-stripe/ec: no Stripe client on context.')
       }
-      const lineItems = await stripe.checkout.sessions.listLineItems(session.id, {
-        limit: 100,
-      })
-      if (lineItems.has_more) {
-        warn(
-          `hono-stripe/ec: checkout.session.completed ${session.id} has more than 100 line items — only the first page was drained.`,
-        )
-      }
       const store = storeOf(c)
-      for (const item of lineItems.data) {
-        const priceId = item.price?.id
-        if (priceId) await store.delete(cartId, priceId)
-      }
+      // Paginate the whole snapshot — a truncated drain would ack the event
+      // and leave the overflow lines in the cart permanently.
+      let startingAfter: string | undefined
+      do {
+        const page = await stripe.checkout.sessions.listLineItems(session.id, {
+          limit: 100,
+          starting_after: startingAfter,
+        })
+        for (const item of page.data) {
+          const priceId = item.price?.id
+          if (priceId) await store.delete(cartId, priceId)
+        }
+        startingAfter = page.has_more ? page.data[page.data.length - 1]?.id : undefined
+      } while (startingAfter)
     },
   }
 
@@ -133,6 +138,7 @@ export const stripeCart = (options: StripeCartOptions): StripeCart => {
     merge: async (c, fromCartId) => {
       const store = storeOf(c)
       const cartId = await cartIdOf(c)
+      if (fromCartId === cartId) return { merged: 0 }
       const [from, to] = await Promise.all([store.list(fromCartId), store.list(cartId)])
       const targetByPrice = new Map(to.map((i) => [i.priceId, i]))
       let merged = 0
@@ -152,6 +158,11 @@ export const stripeCart = (options: StripeCartOptions): StripeCart => {
     checkout: async (c, checkoutOptions) => {
       const store = storeOf(c)
       const cartId = await cartIdOf(c)
+      if (!cartId) {
+        throw new Error(
+          'hono-stripe/ec: no cart owner id resolved — refusing checkout (the session could charge but never drain).',
+        )
+      }
       const lines = await store.list(cartId)
       if (lines.length === 0) {
         throw new Error('hono-stripe/ec: refusing checkout on an empty cart')
