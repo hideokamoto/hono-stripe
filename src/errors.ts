@@ -109,9 +109,11 @@ export const stripeErrorResponse = (
 export interface StripeErrorHandlerOptions {
   /**
    * Locale for card-decline `userMessage` — `'en'` (default) or `'ja'`,
-   * resolved via `stripe-decline-codes`.
+   * resolved via `stripe-decline-codes`. Accepts a per-request function, e.g.
+   * to follow the `Accept-Language` header:
+   * `locale: (c) => c.req.header('accept-language')?.startsWith('ja') ? 'ja' : 'en'`
    */
-  locale?: Locale
+  locale?: Locale | ((c: Context) => Locale | undefined)
   /**
    * Called for errors that are NOT `StripeError` (after HTTPException
    * passthrough). Default: generic `500 { error: { type: 'internal_error' } }`.
@@ -142,7 +144,11 @@ export interface StripeErrorHandlerOptions {
 export const stripeErrorHandler = (options?: StripeErrorHandlerOptions): ErrorHandler => {
   return (err, c) => {
     if (err instanceof HTTPException) return err.getResponse()
-    if (err instanceof errors.StripeError) return stripeErrorResponse(c, err, options?.locale)
+    if (err instanceof errors.StripeError) {
+      const locale =
+        typeof options?.locale === 'function' ? options.locale(c) : options?.locale
+      return stripeErrorResponse(c, err, locale)
+    }
     if (options?.fallback) return options.fallback(err, c)
     return json(c, 500, {
       error: { type: 'internal_error', message: 'Internal server error' },

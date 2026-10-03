@@ -54,6 +54,29 @@ describe('stripeErrorHandler', () => {
     expect(error.retryable).toBe(true)
   })
 
+  it('resolves locale per request (Accept-Language)', async () => {
+    const app = new Hono()
+    app.onError(
+      stripeErrorHandler({
+        locale: (c) =>
+          c.req.header('accept-language')?.startsWith('ja') ? 'ja' : 'en',
+      }),
+    )
+    app.get('/boom', () => {
+      throw cardError('insufficient_funds')
+    })
+
+    const ja = await app.request('/boom', {
+      headers: { 'accept-language': 'ja-JP,ja;q=0.9,en;q=0.8' },
+    })
+    expect((await ja.json()).error.userMessage).toContain('お支払い方法')
+
+    const en = await app.request('/boom', {
+      headers: { 'accept-language': 'en-US,en;q=0.9' },
+    })
+    expect((await en.json()).error.userMessage).toMatch(/alternative payment method/i)
+  })
+
   it('marks hard declines as not retryable', async () => {
     const res = await makeApp(() => {
       throw cardError('fraudulent')
