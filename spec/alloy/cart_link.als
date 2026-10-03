@@ -9,7 +9,13 @@
 
 sig User {}
 sig AnonSession {}
-sig Price {}
+
+abstract sig PriceKind {}
+one sig OneTime, Recurring extends PriceKind {}
+
+sig Price {
+  kind: one PriceKind
+}
 
 sig Cart {
   owner: one (User + AnonSession),
@@ -20,10 +26,19 @@ sig Item {
   priceId: one Price
 }
 
+abstract sig SessionMode {}
+one sig Payment, Subscription extends SessionMode {}
+
 sig CheckoutSession {
   items: Item -> one Int,   -- snapshot taken at checkout time
   user: lone User,          -- resolvable owner at charge time
-  cart: lone Cart           -- cart this session drained
+  cart: lone Cart,          -- cart this session drained
+  mode: one SessionMode     -- ec only ever emits mode: 'payment'
+}
+
+sig Fulfillment {
+  of: one CheckoutSession,
+  items: Item -> one Int    -- what was actually shipped/provisioned
 }
 
 -- The same person ends up with TWO carts (anon cart + user cart) unless
@@ -66,3 +81,40 @@ pred DuplicatePriceInCart {
     i1 in c.items.Int and i2 in c.items.Int and i1.priceId = i2.priceId
 }
 run DuplicatePriceInCart for 4
+
+-- Nothing stops a payment-mode session from snapshotting a cart that
+-- contains a recurring price. ec only sees priceId STRINGS — it cannot
+-- know a price's kind — so the boundary is enforced by Stripe rejecting
+-- session creation, never by the cart layer. (Alloy scenario: the shape
+-- exists; the app's obligation is to let the Stripe error surface, and to
+-- document that recurring prices belong to billing's flow, not carts.)
+pred RecurringLineInPaymentSession {
+  some s: CheckoutSession | s.mode = Payment and
+    some i: s.items.Int | i.priceId.kind = Recurring
+}
+run RecurringLineInPaymentSession for 4
+
+-- After a session snapshots a cart, the cart can keep changing (another
+-- tab). Here the cart holds an Item whose priceId IS in the snapshot but
+-- which is a different Item atom — the post-snapshot re-add shape. Drain
+-- deletes by priceId, so this atom gets deleted despite being written
+-- after the snapshot (Quint: noPostSnapWriteLoss counterexample).
+pred PostSnapshotReadd {
+  some s: CheckoutSession |
+    some c: s.cart |
+      some disj i1, i2: Item |
+        i1 in s.items.Int and
+        i2 in c.items.Int and
+        i1.priceId = i2.priceId
+}
+run PostSnapshotReadd for 5
+
+-- The cart at fulfill time can differ from the snapshotted items —
+-- fulfillment must ship s.items (the charged snapshot), never a fresh
+-- cart enumeration, or it can ship uncharged lines (Quint:
+-- fulfilledExactlyCharged encodes this as the onDrained contract).
+pred FulfillmentDrift {
+  some s: CheckoutSession | some s.cart and s.items != s.cart.items and
+    some f: Fulfillment | f.of = s and f.items = s.cart.items
+}
+run FulfillmentDrift for 5
