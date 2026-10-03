@@ -267,6 +267,11 @@ instead of letting every Stripe failure become a `500`:
 import { stripeErrorHandler } from 'hono-stripe'
 
 app.onError(stripeErrorHandler({ locale: 'ja' })) // 'en' default
+
+// or per-request — e.g. follow Accept-Language:
+app.onError(stripeErrorHandler({
+  locale: (c) => c.req.header('accept-language')?.startsWith('ja') ? 'ja' : 'en',
+}))
 ```
 
 Card declines get extra fields your client can render directly —
