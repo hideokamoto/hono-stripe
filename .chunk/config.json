@@ -1,0 +1,28 @@
+{
+  "commands": [
+    {
+      "name": "spec-typecheck",
+      "run": "quint typecheck spec/quint/billing_sync.qnt && quint typecheck spec/quint/billing_sync_2ev.qnt",
+      "remote": true
+    },
+    {
+      "name": "spec-sim",
+      "run": "for i in convPayloadAtomic convFetchLwwAtomic convFetchGuardAtomic convFetchTieAtomic convPayloadKv convFetchGuardKv convFetchTieKv neverAhead; do echo ===$i; quint run spec/quint/billing_sync_2ev.qnt --invariant=$i --max-steps=12 --max-samples=20000 2>&1 | grep -E 'violation|No violation'; done",
+      "remote": true
+    },
+    {
+      "name": "spec-verify",
+      "run": "for i in convPayloadAtomic convFetchLwwAtomic convFetchGuardAtomic convFetchTieAtomic convPayloadKv convFetchGuardKv convFetchTieKv neverAhead; do echo ===$i; quint verify spec/quint/billing_sync_2ev.qnt --invariant=$i --max-steps=12 2>&1 | tail -2; done",
+      "remote": true
+    },
+    {
+      "name": "spec-alloy",
+      "run": "java -jar ~/tools/alloy.jar exec spec/alloy/billing_link.als",
+      "remote": true
+    }
+  ],
+  "validation": {
+    "sidecarImage": "d6820fcc-fac2-4027-8d9e-6892b4ac0556"
+  },
+  "orgID": "b478833b-34cf-467e-b33d-143c1aa82a3d"
+}
