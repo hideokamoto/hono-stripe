@@ -85,7 +85,9 @@
   },
   "devDependencies": {
     "@size-limit/file": "^11.1.6",
+    "@types/better-sqlite3": "9.6.0",
     "@types/node": "^22.10.2",
+    "better-sqlite3": "13.0.3",
     "hono": "^4.12.25",
     "size-limit": "^11.1.6",
     "stripe": "^22.2.1",
