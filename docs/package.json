@@ -1,0 +1,25 @@
+{
+  "name": "hono-stripe-docs",
+  "private": true,
+  "type": "module",
+  "description": "Documentation site for hono-stripe (Starlight + TypeDoc, deployed to Cloudflare Workers Static Assets).",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "typecheck": "astro check",
+    "preview": "wrangler dev",
+    "deploy": "astro build && wrangler deploy"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.42.5",
+    "astro": "^7.2.10",
+    "starlight-typedoc": "^0.23.1",
+    "typedoc": "0.28.x",
+    "typedoc-plugin-markdown": "^4.13.1",
+    "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260610.1",
+    "wrangler": "^4.100.0"
+  }
+}

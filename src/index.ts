@@ -1,8 +1,7 @@
 export { stripeMiddleware } from './middleware'
 export { getStripe } from './context'
-export { createPaymentIntent, createCheckoutSession } from './helpers'
-export { verifyStripeSignature } from './webhook'
-export type { VerifyStripeSignatureOptions } from './webhook'
+export { stripeErrorHandler, stripeErrorResponse } from './errors'
+export type { StripeErrorBody, StripeErrorHandlerOptions } from './errors'
 export {
   isNodeRuntime,
   isWorkersRuntime,

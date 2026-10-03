@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hono-stripe-docs",
+  // Capped at the newest date the bundled workerd knows; advance when
+  // wrangler/workerd is upgraded. Static assets don't depend on the date.
+  "compatibility_date": "2026-06-16",
+  // Static-assets-only Worker: `wrangler deploy` publishes the Astro build
+  // output. No Worker script needed — Starlight's dist/ is served as-is.
+  "assets": {
+    "directory": "./dist",
+  },
+}

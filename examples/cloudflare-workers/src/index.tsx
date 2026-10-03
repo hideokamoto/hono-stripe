@@ -2,11 +2,11 @@ import { Hono } from 'hono'
 import {
   stripeMiddleware,
   getStripe,
-  createPaymentIntent,
-  createCheckoutSession,
-  verifyStripeSignature,
+  stripeErrorHandler,
   type StripeEnv,
 } from 'hono-stripe'
+import { stripeWebhook, memoryEventStore } from 'hono-stripe/webhook'
+import { StripePaymentForm } from 'hono-stripe/ui'
 import { Layout } from './layout'
 
 type Bindings = {
@@ -27,15 +27,21 @@ const PRODUCT = {
   currency: 'usd',
 } as const
 
+// Map Stripe SDK errors to HTTP statuses — card declines reach the user as
+// 402 (with decline_code), upstream Stripe outages as 502, and auth problems
+// as a sanitized 500 that never leaks key details.
+app.onError(stripeErrorHandler())
+
 // Inject `c.var.stripe` for the API routes and the post-checkout return page.
 // On Workers the middleware applies Stripe.createFetchHttpClient() automatically.
 app.use('/api/*', stripeMiddleware())
 app.use('/return', stripeMiddleware())
 
 // ---------------------------------------------------------------------------
-// Layer 3 (UI) — pages served with hono/jsx. No React, no build step for the
-// frontend: the payment UI is the <stripe-payment-element> web component from
-// stripe-pwa-elements, loaded from a CDN.
+// UI — hono-stripe/ui renders the <stripe-payment-element> web component
+// (stripe-pwa-elements) loaded from a CDN, plus a bootstrap script that POSTs
+// to `endpoint` and assigns the returned { clientSecret, publishableKey }.
+// No React, no frontend build step.
 // ---------------------------------------------------------------------------
 
 app.get('/', (c) =>
@@ -46,26 +52,9 @@ app.get('/', (c) =>
         ${(PRODUCT.amount / 100).toFixed(2)} {PRODUCT.currency.toUpperCase()}
       </p>
 
-      {/*
-        stripe-pwa-elements web component. It needs a publishable key and the
-        client_secret of a PaymentIntent created on the server. Property names
-        follow stripe-pwa-elements — see https://github.com/stripe/stripe-pwa-elements
-      */}
-      <stripe-payment-element id="payment" />
-
-      <script type="module" src="https://cdn.jsdelivr.net/npm/stripe-pwa-elements/dist/stripe-pwa-elements/stripe-pwa-elements.esm.js" />
-      <script
-        type="module"
-        // biome-ignore lint: inline bootstrap for the demo
-        dangerouslySetInnerHTML={{
-          __html: `
-            const res = await fetch('/api/payment-intent', { method: 'POST' });
-            const { clientSecret, publishableKey } = await res.json();
-            const el = document.getElementById('payment');
-            el.publishableKey = publishableKey;
-            el.intentClientSecret = clientSecret;
-          `,
-        }}
+      <StripePaymentForm
+        endpoint="/api/payment-intent"
+        publishableKey={c.env.STRIPE_PUBLISHABLE_KEY}
       />
 
       <p>
@@ -80,20 +69,11 @@ app.get('/checkout', (c) =>
     <Layout title="Pay with Checkout Session">
       <h1>{PRODUCT.name}</h1>
       <p>Checkout Sessions flow (ui_mode: embedded_page).</p>
-      <stripe-payment-element id="checkout" />
 
-      <script type="module" src="https://cdn.jsdelivr.net/npm/stripe-pwa-elements/dist/stripe-pwa-elements/stripe-pwa-elements.esm.js" />
-      <script
-        type="module"
-        dangerouslySetInnerHTML={{
-          __html: `
-            const res = await fetch('/api/checkout-session', { method: 'POST' });
-            const { clientSecret, publishableKey } = await res.json();
-            const el = document.getElementById('checkout');
-            el.publishableKey = publishableKey;
-            el.checkoutSessionClientSecret = clientSecret;
-          `,
-        }}
+      <StripePaymentForm
+        endpoint="/api/checkout-session"
+        intent="checkout"
+        publishableKey={c.env.STRIPE_PUBLISHABLE_KEY}
       />
 
       <p>
@@ -125,11 +105,12 @@ app.get('/return', async (c) => {
 })
 
 // ---------------------------------------------------------------------------
-// Layer 1 (intent / session creation) — hono-stripe helpers.
+// Intent / Session creation — direct Stripe SDK calls on the injected
+// `c.var.stripe` client.
 // ---------------------------------------------------------------------------
 
 app.post('/api/payment-intent', async (c) => {
-  const intent = await createPaymentIntent(c, {
+  const intent = await getStripe(c).paymentIntents.create({
     amount: PRODUCT.amount,
     currency: PRODUCT.currency,
     automatic_payment_methods: { enabled: true },
@@ -142,7 +123,7 @@ app.post('/api/payment-intent', async (c) => {
 })
 
 app.post('/api/checkout-session', async (c) => {
-  const session = await createCheckoutSession(c, {
+  const session = await getStripe(c).checkout.sessions.create({
     // A ui_mode that returns a client_secret to drive the UI yourself (what
     // stripe-pwa-elements consumes). Values differ across Stripe versions —
     // 'embedded_page' here; recent SDKs also add 'custom'.
@@ -167,31 +148,28 @@ app.post('/api/checkout-session', async (c) => {
 })
 
 // ---------------------------------------------------------------------------
-// Layer 2 (webhook) — hono-stripe verifies the signature. Typed per-event
-// routing is the job of @kotodayori/hono; reach for it when you outgrow the
-// switch below.
+// Webhook — hono-stripe/webhook: signature verification, typed per-event
+// dispatch (event.data.object is narrowed by event name), and delivery dedupe.
+// memoryEventStore is per-isolate, fine for dev — in production back it with
+// Workers KV: dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS)
 // ---------------------------------------------------------------------------
 
-app.post('/api/webhook', async (c) => {
-  // On a missing/invalid signature, verifyStripeSignature throws an
-  // HTTPException(400), which Hono renders as a 400 response — so a bad
-  // signature already returns 400 (not 500) and does not trigger Stripe retries.
-  const event = await verifyStripeSignature(c, { secret: c.env.STRIPE_WEBHOOK_SECRET })
+const processedEvents = memoryEventStore()
 
-  switch (event.type) {
-    case 'payment_intent.succeeded':
-      console.log('PaymentIntent succeeded:', event.data.object.id)
-      break
-    case 'checkout.session.completed':
-      console.log('Checkout Session completed:', event.data.object.id)
-      break
-    default:
-      // For typed routing across many event types, use @kotodayori/hono:
-      // https://www.npmjs.com/package/@kotodayori/hono
-      break
-  }
-
-  return c.body(null, 200)
-})
+app.post(
+  '/api/webhook',
+  stripeWebhook({
+    secret: (c) => c.env.STRIPE_WEBHOOK_SECRET,
+    dedupe: processedEvents,
+    on: {
+      'payment_intent.succeeded': (event) => {
+        console.log('PaymentIntent succeeded:', event.data.object.id)
+      },
+      'checkout.session.completed': (event) => {
+        console.log('Checkout Session completed:', event.data.object.id)
+      },
+    },
+  }),
+)
 
 export default app
