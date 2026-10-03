@@ -26,6 +26,16 @@
       "types": "./dist/ui.d.ts",
       "import": "./dist/ui.js",
       "require": "./dist/ui.cjs"
+    },
+    "./billing": {
+      "types": "./dist/billing/index.d.ts",
+      "import": "./dist/billing/index.js",
+      "require": "./dist/billing/index.cjs"
+    },
+    "./billing/schema": {
+      "types": "./dist/billing/schema.d.ts",
+      "import": "./dist/billing/schema.js",
+      "require": "./dist/billing/schema.cjs"
     }
   },
   "files": [

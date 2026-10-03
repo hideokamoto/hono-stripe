@@ -131,7 +131,7 @@ const replayAtomic = async (vector: Vector, store: BillingStore) => {
       deliverQueue.push(seq)
       const handler = handlers['customer.subscription.updated']
       if (!handler) throw new Error('missing subscription.updated handler')
-      handlerPromises.set(seq, handler(makeEvent<Stripe.CustomerSubscriptionUpdatedEvent>(seq), c))
+      handlerPromises.set(seq, Promise.resolve(handler(makeEvent<Stripe.CustomerSubscriptionUpdatedEvent>(seq), c)))
       continue
     }
     const finish = action.match(/^finish(\d)$/)
@@ -194,8 +194,6 @@ describe('sync vectors (spec/quint/billing_sync_2ev.qnt)', () => {
 })
 
 describe('sync engine — userId rules (spec/alloy/billing_link.als)', () => {
-  const opts = () => ({ store: memoryBillingStore() })
-
   it('does not write a subscription whose userId is unresolvable', async () => {
     const store = memoryBillingStore()
     const warn = vi.fn()

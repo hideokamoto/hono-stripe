@@ -5,7 +5,7 @@ import { memoryEventStore } from '../src/dedupe'
 import { __resetCaches } from '../src/runtime'
 import { createTestEvent, createWebhookRequest } from '../src/testing'
 import type { StripeEnv } from '../src/types'
-import { stripeWebhook } from '../src/webhooks'
+import { mergeWebhookHandlers, stripeWebhook } from '../src/webhooks'
 
 const WEBHOOK_SECRET = 'whsec_test_signing_secret'
 const API_KEY = 'sk_test_123'
@@ -187,5 +187,31 @@ describe('stripeWebhook', () => {
     expect(res.status).toBe(200)
     expect(constructEventAsync).toHaveBeenCalledTimes(1)
     expect(handler).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('mergeWebhookHandlers', () => {
+  it('runs handlers for the same event key in order and uses the first response', async () => {
+    const order: string[] = []
+    const merged = mergeWebhookHandlers(
+      { 'payment_intent.succeeded': async () => { order.push('a') } },
+      { 'payment_intent.succeeded': async () => { order.push('b'); return new Response('custom') } },
+    )
+    const app = buildApp({ on: merged })
+    const res = await postEvent(app, 'payment_intent.succeeded', { id: 'pi_1' })
+    expect(order).toEqual(['a', 'b'])
+    expect(await res.text()).toBe('custom')
+  })
+
+  it('keeps distinct event keys from each map', async () => {
+    const seen: string[] = []
+    const merged = mergeWebhookHandlers(
+      { 'payment_intent.succeeded': () => { seen.push('pi') } },
+      { 'customer.updated': () => { seen.push('cus') } },
+    )
+    const app = buildApp({ on: merged })
+    await postEvent(app, 'customer.updated', { id: 'cus_1' })
+    await postEvent(app, 'payment_intent.succeeded', { id: 'pi_1' })
+    expect(seen).toEqual(['cus', 'pi'])
   })
 })

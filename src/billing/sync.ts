@@ -3,13 +3,15 @@ import type Stripe from 'stripe'
 import type { StripeWebhookHandlers } from '../webhooks'
 import type {
   BillingStore,
+  BillingStoreResolver,
   BillingSubscriptionRow,
 } from './types'
+import { resolveBillingStore } from './types'
 
 const DEFAULT_USER_ID_KEY = 'user_id'
 
 export interface BillingSyncOptions {
-  store: BillingStore
+  store: BillingStoreResolver
   /** Metadata key carrying the app user id. Default: `user_id`. */
   userIdKey?: string
   /** Custom user-id resolver; overrides the metadata convention. */
@@ -18,7 +20,7 @@ export interface BillingSyncOptions {
   warn?: (message: string) => void
 }
 
-const expand = { expand: ['items.data.price'] } as const
+const expand: { expand: string[] } = { expand: ['items.data.price'] }
 
 const getStripeFromContext = (c: Context): Stripe => {
   const stripe = c.get('stripe') as Stripe | undefined
@@ -94,8 +96,12 @@ export const mapSubscription = (
   }
 }
 
+type ResolvedBillingSyncOptions = Omit<BillingSyncOptions, 'store'> & {
+  store: BillingStore
+}
+
 const resolveUserIdForSubscription = async (
-  opts: BillingSyncOptions,
+  opts: ResolvedBillingSyncOptions,
   stripe: Stripe,
   sub: Stripe.Subscription,
 ): Promise<string | null> => {
@@ -117,7 +123,7 @@ const resolveUserIdForSubscription = async (
  * unconditionally. The only policy proven to converge at quiescence.
  */
 export const syncSubscriptionFromApi = async (
-  opts: BillingSyncOptions,
+  opts: ResolvedBillingSyncOptions,
   stripe: Stripe,
   subscriptionId: string,
   lastEventCreated: number,
@@ -148,20 +154,30 @@ export const syncSubscriptionFromApi = async (
  * Requires `stripeMiddleware` upstream (handlers use `c.var.stripe`).
  */
 export const billingSyncHandlers = (opts: BillingSyncOptions): StripeWebhookHandlers => {
+  const resolved = (c: Context): ResolvedBillingSyncOptions => ({
+    ...opts,
+    store: resolveBillingStore(opts.store, c),
+  })
   const syncSub = (event: Stripe.CustomerSubscriptionCreatedEvent | Stripe.CustomerSubscriptionUpdatedEvent | Stripe.CustomerSubscriptionDeletedEvent, c: Context) =>
-    syncSubscriptionFromApi(opts, getStripeFromContext(c), event.data.object.id, event.created)
+    syncSubscriptionFromApi(resolved(c), getStripeFromContext(c), event.data.object.id, event.created)
 
   return {
     'checkout.session.completed': async (event, c) => {
       const session = event.data.object
       if (session.mode !== 'subscription') return
       const stripe = getStripeFromContext(c)
+      const store = resolved(c).store
       const customerId = customerIdOf(session.customer)
       // Resolution order (spec/alloy/billing_link.als):
       // client_reference_id > session.metadata > subscription.metadata > customer.metadata.
       const userId =
         session.client_reference_id ??
-        resolveUserId(opts, session, session.subscription, session.customer)
+        resolveUserId(
+          opts,
+          session,
+          session.subscription,
+          session.customer as { metadata?: Stripe.Metadata | null } | string | null,
+        )
       const subscriptionId =
         typeof session.subscription === 'string'
           ? session.subscription
@@ -169,11 +185,11 @@ export const billingSyncHandlers = (opts: BillingSyncOptions): StripeWebhookHand
 
       if (userId && customerId) {
         const now = Math.floor(Date.now() / 1000)
-        const existing = await opts.store.getCustomerByStripeId(customerId)
+        const existing = await store.getCustomerByStripeId(customerId)
         if (existing && existing.userId !== userId) {
-          await opts.store.relinkCustomer(customerId, userId)
+          await store.relinkCustomer(customerId, userId)
         } else if (!existing) {
-          await opts.store.upsertCustomer({
+          await store.upsertCustomer({
             userId,
             stripeCustomerId: customerId,
             raw:
@@ -191,7 +207,7 @@ export const billingSyncHandlers = (opts: BillingSyncOptions): StripeWebhookHand
       }
 
       if (subscriptionId) {
-        await syncSubscriptionFromApi(opts, stripe, subscriptionId, event.created)
+        await syncSubscriptionFromApi(resolved(c), stripe, subscriptionId, event.created)
       }
     },
     'customer.subscription.created': syncSub,
