@@ -188,3 +188,17 @@ Alloy scenarios (all SAT — app-level rules the layout cannot enforce):
 - `MergeConflict` — same priceId across carts needs a merge rule (newer addedAt)
 - `EmptyCheckout` — refuse checkout on empty cart
 - `DuplicatePriceInCart` — key line items by priceId in the app
+
+## `ec` implementation coverage
+
+| Design requirement | Implementation | Test |
+| -- | -- | -- |
+| Pure put/delete mutations, no read-modify-write | `CartStore` contract (`src/ec/types.ts`), `memoryCartStore` | `test/ec_cart.test.ts` |
+| Checkout = enumerate → snapshot → delete only snapshotted keys | `checkout` + `drain` (`src/ec/index.ts`) | `test/ec_cart.test.ts` |
+| Webhook drain on `checkout.session.completed` (payment only) | `handlers` — `client_reference_id` carries the cart id | `test/ec_cart.test.ts` |
+| Stale-charge hazard (documented boundary, not enforceable) | `CartStore` JSDoc; `warn` on truncated drain | — |
+| Login merge anon + user carts (`TwoCartsOneUser`) | `merge` | `test/ec_cart.test.ts` |
+| Merge conflict → newer addedAt wins (`MergeConflict`) | `merge` addedAt comparison | `test/ec_cart.test.ts` |
+| Refuse empty checkout (`EmptyCheckout`) | `checkout` throws | `test/ec_cart.test.ts` |
+| Populate resolvable owner (`OrphanCheckout`) | `checkout` stamps `client_reference_id: cartId` | `test/ec_cart.test.ts` |
+| One line per price (`DuplicatePriceInCart`) | `CartItem` keyed by `priceId` | `test/ec_cart.test.ts` |

@@ -36,6 +36,11 @@
       "types": "./dist/billing/schema.d.ts",
       "import": "./dist/billing/schema.js",
       "require": "./dist/billing/schema.cjs"
+    },
+    "./ec": {
+      "types": "./dist/ec/index.d.ts",
+      "import": "./dist/ec/index.js",
+      "require": "./dist/ec/index.cjs"
     }
   },
   "files": [

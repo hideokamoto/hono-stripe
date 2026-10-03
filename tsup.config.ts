@@ -8,6 +8,7 @@ export default defineConfig({
     'src/ui.tsx',
     'src/billing/index.ts',
     'src/billing/schema.ts',
+    'src/ec/index.ts',
   ],
   format: ['esm', 'cjs'],
   dts: true,

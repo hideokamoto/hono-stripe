@@ -34,5 +34,11 @@
     "path": "dist/billing/schema.js",
     "limit": "1 kB",
     "brotli": true
+  },
+  {
+    "name": "ESM (dist/ec/index.js)",
+    "path": "dist/ec/index.js",
+    "limit": "2 kB",
+    "brotli": true
   }
 ]
