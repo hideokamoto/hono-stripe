@@ -59,6 +59,11 @@ export const sqlBillingStore = (
     r.createdAt, r.updatedAt,
   ]
 
+  // node-pg deserializes BIGINT/int8 as string — normalize every numeric
+  // column or the event guard and tie classification compare '10' === 10.
+  const num = (v: unknown): number | null =>
+    v === null || v === undefined ? null : Number(v)
+
   const toSubRow = (r: Record<string, unknown>): BillingSubscriptionRow => ({
     id: r.id as string,
     userId: r.user_id as string,
@@ -68,19 +73,19 @@ export const sqlBillingStore = (
       typeof r.price_ids === 'string'
         ? (JSON.parse(r.price_ids) as string[])
         : (r.price_ids as string[]),
-    quantity: (r.quantity as number | null) ?? null,
-    currentPeriodEnd: (r.current_period_end as number | null) ?? null,
+    quantity: num(r.quantity),
+    currentPeriodEnd: num(r.current_period_end),
     cancelAtPeriodEnd: Boolean(r.cancel_at_period_end),
-    canceledAt: (r.canceled_at as number | null) ?? null,
-    trialEnd: (r.trial_end as number | null) ?? null,
-    endedAt: (r.ended_at as number | null) ?? null,
-    lastEventCreated: r.last_event_created as number,
+    canceledAt: num(r.canceled_at),
+    trialEnd: num(r.trial_end),
+    endedAt: num(r.ended_at),
+    lastEventCreated: Number(r.last_event_created),
     raw:
       typeof r.raw === 'string'
         ? (JSON.parse(r.raw) as unknown)
         : ((r.raw as unknown) ?? null),
-    createdAt: r.created_at as number,
-    updatedAt: r.updated_at as number,
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
   })
 
   const toCustomerRow = (r: Record<string, unknown>): BillingCustomerRow => ({
@@ -90,16 +95,25 @@ export const sqlBillingStore = (
       typeof r.raw === 'string'
         ? (JSON.parse(r.raw) as unknown)
         : ((r.raw as unknown) ?? null),
-    createdAt: r.created_at as number,
-    updatedAt: r.updated_at as number,
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at),
   })
 
   const upsertSubscription = async (
     row: BillingSubscriptionRow,
     options?: UpsertSubscriptionOptions,
   ): Promise<SubscriptionWriteResult> => {
+    // last_event_created always takes the max so a `force` (tie-refetch)
+    // write cannot regress the guard below a newer row that landed in
+    // between — the monotone guard is what the convergence proof needs.
+    // Scalar max differs by dialect: sqlite MAX(a,b), pg GREATEST(a,b).
+    const maxFn = dialect === 'pg' ? 'GREATEST' : 'MAX'
     const setClauses = SUB_COLS.filter((c) => c !== 'id' && c !== 'created_at')
-      .map((c) => `${c} = excluded.${c}`)
+      .map((c) =>
+        c === 'last_event_created'
+          ? `${c} = ${maxFn}(${subscriptionsTable}.${c}, excluded.${c})`
+          : `${c} = excluded.${c}`,
+      )
       .join(', ')
     const guard = options?.force
       ? ''
@@ -118,7 +132,7 @@ export const sqlBillingStore = (
       `SELECT last_event_created FROM ${subscriptionsTable} WHERE id = ${ph(0)}`,
       [row.id],
     )
-    const stored = existing[0]?.last_event_created as number | undefined
+    const stored = existing[0] ? Number(existing[0].last_event_created) : undefined
     return stored === row.lastEventCreated ? 'tie' : 'stale'
   }
 
@@ -162,6 +176,16 @@ export const sqlBillingStore = (
     },
     relinkCustomer: async (stripeCustomerId, userId) => {
       const now = nowSeconds()
+      // Displace any row the target userId already owns — user_id is the
+      // PRIMARY KEY (1:1 user↔customer), so without this the UPDATE below
+      // violates the constraint when the user had a previous customer.
+      // The displaced stripe_customer_id is left unlinked; syncFromStripe
+      // can re-link it if events say otherwise.
+      await execute(
+        `DELETE FROM ${customersTable}
+         WHERE user_id = ${ph(0)} AND stripe_customer_id <> ${ph(1)}`,
+        [userId, stripeCustomerId],
+      )
       await execute(
         `UPDATE ${customersTable} SET user_id = ${ph(0)}, updated_at = ${ph(1)}
          WHERE stripe_customer_id = ${ph(2)}`,

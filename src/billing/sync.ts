@@ -74,6 +74,12 @@ export const mapSubscription = (
     .filter((v): v is number => typeof v === 'number')
     .sort((a, b) => b - a)[0]
   const legacy = (sub as { current_period_end?: number | null }).current_period_end
+  // Total units across items — single-item subs keep their quantity,
+  // multi-item subs (plan + addons) keep the sum. `raw` retains per-item
+  // granularity for consumers that need it.
+  const quantities = items
+    .map((i) => i.quantity)
+    .filter((q): q is number => typeof q === 'number')
   const now = Math.floor(Date.now() / 1000)
   return {
     id: sub.id,
@@ -83,7 +89,7 @@ export const mapSubscription = (
     priceIds: items
       .map((i) => (typeof i.price === 'string' ? i.price : i.price?.id))
       .filter((v): v is string => typeof v === 'string'),
-    quantity: items[0]?.quantity ?? null,
+    quantity: quantities.length ? quantities.reduce((a, b) => a + b, 0) : null,
     currentPeriodEnd: itemPeriodEnd ?? legacy ?? null,
     cancelAtPeriodEnd: sub.cancel_at_period_end,
     canceledAt: sub.canceled_at ?? null,
@@ -100,6 +106,19 @@ type ResolvedBillingSyncOptions = Omit<BillingSyncOptions, 'store'> & {
   store: BillingStore
 }
 
+const resolveUserIdViaCustomer = async (
+  opts: ResolvedBillingSyncOptions,
+  stripe: Stripe,
+  customerId: string,
+): Promise<string | null> => {
+  const existing = await opts.store.getCustomerByStripeId(customerId)
+  if (existing) return existing.userId
+  // Last resort: customer.metadata on the Stripe side.
+  const customer = await stripe.customers.retrieve(customerId)
+  if (customer.deleted) return null
+  return resolveUserId(opts, customer)
+}
+
 const resolveUserIdForSubscription = async (
   opts: ResolvedBillingSyncOptions,
   stripe: Stripe,
@@ -109,12 +128,7 @@ const resolveUserIdForSubscription = async (
   if (direct) return direct
   const customerId = customerIdOf(sub.customer)
   if (!customerId) return null
-  const existing = await opts.store.getCustomerByStripeId(customerId)
-  if (existing) return existing.userId
-  // Last resort: customer.metadata on the Stripe side.
-  const customer = await stripe.customers.retrieve(customerId)
-  if (customer.deleted) return null
-  return resolveUserId(opts, customer)
+  return resolveUserIdViaCustomer(opts, stripe, customerId)
 }
 
 /**
@@ -166,22 +180,34 @@ export const billingSyncHandlers = (opts: BillingSyncOptions): StripeWebhookHand
       const session = event.data.object
       if (session.mode !== 'subscription') return
       const stripe = getStripeFromContext(c)
-      const store = resolved(c).store
+      const ro = resolved(c)
+      const store = ro.store
       const customerId = customerIdOf(session.customer)
-      // Resolution order (spec/alloy/billing_link.als):
-      // client_reference_id > session.metadata > subscription.metadata > customer.metadata.
-      const userId =
-        session.client_reference_id ??
-        resolveUserId(
-          opts,
-          session,
-          session.subscription,
-          session.customer as { metadata?: Stripe.Metadata | null } | string | null,
-        )
       const subscriptionId =
         typeof session.subscription === 'string'
           ? session.subscription
           : (session.subscription?.id ?? null)
+      // Resolution order (spec/alloy/billing_link.als):
+      // client_reference_id > session.metadata > subscription.metadata >
+      // customer.metadata. Webhook payloads are NOT expanded — subscription
+      // and customer arrive as bare ids, so the last two tiers fall back to
+      // API reads. `||` (not `??`): an empty client_reference_id must not
+      // shadow the metadata tiers.
+      const userId =
+        session.client_reference_id ||
+        resolveUserId(opts, session) ||
+        resolveUserId(opts, session.subscription) ||
+        (subscriptionId
+          ? resolveUserId(
+              opts,
+              await stripe.subscriptions.retrieve(subscriptionId, expand),
+            )
+          : null) ||
+        resolveUserId(
+          opts,
+          session.customer as { metadata?: Stripe.Metadata | null } | string | null,
+        ) ||
+        (customerId ? await resolveUserIdViaCustomer(ro, stripe, customerId) : null)
 
       if (userId && customerId) {
         const now = Math.floor(Date.now() / 1000)
