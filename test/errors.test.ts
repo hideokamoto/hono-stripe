@@ -4,12 +4,23 @@ import Stripe from 'stripe'
 import { describe, expect, it } from 'vitest'
 import { stripeErrorHandler } from '../src/errors'
 
-const makeApp = (thrower: () => never, fallback?: (e: Error) => Response) => {
+const makeApp = (
+  thrower: () => never,
+  options?: { locale?: 'en' | 'ja'; fallback?: (e: Error) => Response },
+) => {
   const app = new Hono()
-  app.onError(stripeErrorHandler(fallback ? { fallback } : undefined))
+  app.onError(stripeErrorHandler(options))
   app.get('/boom', () => thrower())
   return app
 }
+
+const cardError = (declineCode: string, message = 'Your card was declined.') =>
+  new Stripe.errors.StripeCardError({
+    type: 'card_error',
+    message,
+    decline_code: declineCode,
+    requestId: 'req_123',
+  } as never)
 
 describe('stripeErrorHandler', () => {
   it('maps StripeCardError → 402 with decline_code', async () => {
@@ -25,6 +36,30 @@ describe('stripeErrorHandler', () => {
     expect(body.error.type).toBe('card_error')
     expect(body.error.code).toBe('insufficient_funds')
     expect(body.error.requestId).toBe('req_123')
+  })
+
+  it('adds localized userMessage + retryable on card declines (ja)', async () => {
+    const res = await makeApp(
+      () => {
+        throw cardError('insufficient_funds')
+      },
+      { locale: 'ja' },
+    ).request('/boom')
+    expect(res.status).toBe(402)
+    const { error } = await res.json()
+    expect(error.message).toBe('Your card was declined.')
+    expect(error.userMessage).toBe('別のお支払い方法を使用してもう一度お試しください。')
+    // insufficient_funds is a soft decline per Stripe's classification —
+    // retrying later can succeed once the balance is topped up.
+    expect(error.retryable).toBe(true)
+  })
+
+  it('marks hard declines as not retryable', async () => {
+    const res = await makeApp(() => {
+      throw cardError('fraudulent')
+    }).request('/boom')
+    const { error } = await res.json()
+    expect(error.retryable).toBe(false)
   })
 
   it('maps StripeInvalidRequestError → 400', async () => {
@@ -110,7 +145,7 @@ describe('stripeErrorHandler', () => {
       () => {
         throw new Error('custom')
       },
-      (e) => new Response(`handled: ${e.message}`, { status: 503 }),
+      { fallback: (e) => new Response(`handled: ${e.message}`, { status: 503 }) },
     ).request('/boom')
     expect(res.status).toBe(503)
     expect(await res.text()).toBe('handled: custom')

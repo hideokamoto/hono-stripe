@@ -266,12 +266,18 @@ instead of letting every Stripe failure become a `500`:
 ```ts
 import { stripeErrorHandler } from 'hono-stripe'
 
-app.onError(stripeErrorHandler())
+app.onError(stripeErrorHandler({ locale: 'ja' })) // 'en' default
 ```
+
+Card declines get extra fields your client can render directly —
+`error.userMessage` is the localized "what to do next" text and
+`error.retryable` distinguishes a soft decline (worth retrying, e.g.
+`insufficient_funds`) from a hard one (`fraudulent`, `stolen_card`). Both come
+from [stripe-decline-codes](https://github.com/hideokamoto/stripe-decline-codes).
 
 | Stripe error | Status | Notes |
 | -- | -- | -- |
-| `StripeCardError` | 402 | passes `decline_code` through — safe for users |
+| `StripeCardError` | 402 | `code` = decline_code, plus `userMessage` (localized via `stripe-decline-codes`) and `retryable` (soft-decline detection) |
 | `StripeInvalidRequestError`, `TemporarySessionExpiredError` | 400 | |
 | `StripeSignatureVerificationError` | 400 | details not leaked |
 | `StripeIdempotencyError` | 409 | |

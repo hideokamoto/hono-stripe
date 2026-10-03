@@ -9,3 +9,4 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - '@astrojs/starlight@0.42.5'
+  - stripe-decline-codes@0.2.0

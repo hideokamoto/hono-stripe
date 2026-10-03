@@ -39,4 +39,8 @@ its native HTTP client and crypto provider automatically.
 - **Let handler errors return 500** — Stripe retries are the recovery path.
 - **Install `app.onError(stripeErrorHandler())`** — a `StripeCardError` should
   reach your user as a 402, not a 500, and Stripe auth problems should never
-  leak their raw messages to clients.
+  leak their raw messages to clients. Card declines additionally carry a
+  localized `error.userMessage` (`{ locale: 'ja' }` supported) and
+  `error.retryable` — render `userMessage` to the customer rather than the raw
+  Stripe `message`, which may describe declines (e.g. `fraudulent`) in terms
+  you should not surface.

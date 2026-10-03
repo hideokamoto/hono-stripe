@@ -8,5 +8,7 @@ export default defineConfig({
   treeshake: true,
   sourcemap: true,
   // stripe / hono are peer dependencies — never bundle them or their subpaths.
-  external: ['stripe', 'hono', 'hono/*'],
+  // stripe-decline-codes is a real dependency but ships its own build; keep it
+  // external so its data tables don't inflate this bundle.
+  external: ['stripe', 'hono', 'hono/*', 'stripe-decline-codes'],
 })
