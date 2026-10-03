@@ -2,7 +2,6 @@ import type {
   BillingCustomerRow,
   BillingStore,
   BillingSubscriptionRow,
-  SubscriptionWriteResult,
   UpsertSubscriptionOptions,
 } from '../types'
 

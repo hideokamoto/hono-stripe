@@ -197,6 +197,52 @@ expect(res.status).toBe(200)
 | `createTestEvent(type, object, options?)` | `Stripe.Event`-shaped fixture around your `data.object` |
 | `createWebhookRequest(event \| payload, { secret, url?, timestamp? })` | `Request` with a valid signature, ready for `app.request()` or `fetch` |
 
+## Billing — `hono-stripe/billing`
+
+Local subscription mirror + plan-gating, in the Cashier style: webhook
+handlers keep `stripe_customers` / `stripe_subscriptions` rows in your own
+database, and entitlement checks read from there instead of the Stripe API.
+The sync protocol (fetch-on-event + timestamp-guarded write + refetch on
+same-second ties) was model-checked for duplicate, out-of-order, and
+concurrent deliveries — see `spec/`.
+
+```ts
+import { stripeBilling, sqlBillingStore } from 'hono-stripe/billing'
+import { mergeWebhookHandlers, stripeWebhook } from 'hono-stripe/webhook'
+
+const billing = stripeBilling({
+  store: (c) =>
+    sqlBillingStore((sql, params = []) =>
+      c.env.DB.prepare(sql).bind(...params).all().then((r) => r.results),
+    ), // D1, better-sqlite3, postgres.js, pg — any driver
+  plans: { pro: 'price_pro_monthly', team: ['price_team_m', 'price_team_y'] },
+  user: (c) => c.get('authUser').id,
+})
+
+app.post('/webhook', stripeWebhook({
+  dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS),
+  on: mergeWebhookHandlers(billing.handlers, {
+    'checkout.session.completed': fulfill,
+  }),
+}))
+
+app.get('/pro/data', billing.requirePlan(['pro', 'team']), (c) => c.text('ok'))
+```
+
+| Export | Purpose |
+| -- | -- |
+| `stripeBilling(options)` | Factory: `handlers`, `getState`, `requirePlan`, `middleware`, `checkoutParams`, `syncFromStripe` |
+| `sqlBillingStore(execute, { dialect? })` | Production store — atomic guarded upsert (`sqlite` or `pg`) |
+| `memoryBillingStore()` | Dev/tests |
+| `BILLING_SCHEMA_SQLITE` / `BILLING_SCHEMA_PG` | DDL for `stripe_customers` + `stripe_subscriptions` (`hono-stripe/billing/schema`) |
+| `billingSyncHandlers(opts)` | The sync handlers alone, for custom composition |
+
+Link your app user to Stripe at checkout with `billing.checkoutParams(userId)`;
+userId resolution order is `client_reference_id` → session metadata →
+subscription metadata → customer metadata. Cloudflare Workers KV cannot be a
+correctness-complete mirror (no atomic check-and-write) — use the SQL store as
+source of truth and `syncFromStripe()` for reconciliation.
+
 ## Payment UI — `hono-stripe/ui`
 
 Server-render a working [stripe-pwa-elements](https://github.com/stripe/stripe-pwa-elements)

@@ -98,7 +98,6 @@ export const sqlBillingStore = (
     row: BillingSubscriptionRow,
     options?: UpsertSubscriptionOptions,
   ): Promise<SubscriptionWriteResult> => {
-    const { createdAt: _ca, updatedAt: _ua, ...rest } = row
     const setClauses = SUB_COLS.filter((c) => c !== 'id' && c !== 'created_at')
       .map((c) => `${c} = excluded.${c}`)
       .join(', ')

@@ -152,3 +152,17 @@ These are obligations the implementation must satisfy:
 - Not modeled: `customer.deleted`, KV secondary-index partial writes,
   livemode/test separation, informational events (`trial_will_end` etc.),
   Stripe's own Entitlements API.
+
+## Implementation coverage
+
+| Design requirement | Implementation | Test |
+| -- | -- | -- |
+| fetch + guard + tie-refetch sync | `src/billing/sync.ts` (`syncSubscriptionFromApi`) | `test/billing_sync.test.ts` (vector replay) |
+| `written`/`stale`/`tie` upsert | `src/billing/store/sql.ts`, `store/memory.ts` | `test/billing_store.test.ts` |
+| Atomic DB guard | `sqlBillingStore` — `ON CONFLICT DO UPDATE ... WHERE` | `test/billing_store.test.ts` (sqlite backend) |
+| Schedule coverage | — | `test/fixtures/sync/*.json` (Quint MBT traces via `spec/tools/itf2vector.mjs`) |
+| Idempotent mirror / retryable handlers | event-guarded upsert | vector replay + store contract |
+| Relink cascade | `relinkCustomer` in both adapters | `test/billing_store.test.ts` |
+| No orphan paid subs | `resolveUserIdForSubscription` + `warn` | `test/billing_sync.test.ts` |
+| Deterministic pick | `pickBestSubscription` in `src/billing/entitlement.ts` | `test/billing_entitlement.test.ts` |
+| userId resolution order | `checkout.session.completed` handler | `test/billing_sync.test.ts` |
