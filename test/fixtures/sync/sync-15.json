@@ -1,0 +1,25 @@
+{
+ "name": "sync-15",
+ "policy": "payload_guard",
+ "storeAtomic": false,
+ "snapshots": {
+  "1": 1,
+  "2": 2
+ },
+ "events": [
+  "emit",
+  "deliver1",
+  "emit",
+  "deliver2",
+  "begin2",
+  "begin1",
+  "commit2",
+  "commit1"
+ ],
+ "final": {
+  "truth": 2,
+  "mirrorVersion": 1,
+  "mirrorCreated": 1,
+  "quiescent": true
+ }
+}
