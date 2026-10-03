@@ -120,9 +120,11 @@ export const stripeBilling = (options: StripeBillingOptions): StripeBilling => {
         status: 'all',
         limit: 100,
       })
-      const now = Math.floor(Date.now() / 1000)
       for (const sub of list.data) {
-        await store.upsertSubscription(mapSubscription(sub, userId, now))
+        // Stamp lastEventCreated 0: a reconcile row must not swallow
+        // delayed webhook events — any real event (created > 0) may still
+        // legitimately refresh this snapshot with live API truth.
+        await store.upsertSubscription(mapSubscription(sub, userId, 0))
       }
       return { synced: list.data.length }
     },

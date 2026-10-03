@@ -17,6 +17,10 @@ export const memoryBillingStore = (): BillingStore => {
 
   return {
     upsertCustomer: async (row) => {
+      const displaced = customers.get(row.userId)
+      if (displaced && displaced.stripeCustomerId !== row.stripeCustomerId) {
+        customerByStripeId.delete(displaced.stripeCustomerId)
+      }
       customers.set(row.userId, row)
       customerByStripeId.set(row.stripeCustomerId, row.userId)
     },
@@ -26,7 +30,14 @@ export const memoryBillingStore = (): BillingStore => {
         if (row.lastEventCreated < existing.lastEventCreated) return 'stale'
         if (row.lastEventCreated === existing.lastEventCreated) return 'tie'
       }
-      subscriptions.set(row.id, row)
+      // Force writes keep the max guard — a tie-refetch write must not
+      // regress lastEventCreated below a newer row that landed in between
+      // (same contract the SQL adapter's GREATEST/MAX clause enforces).
+      const lastEventCreated =
+        options?.force && existing
+          ? Math.max(existing.lastEventCreated, row.lastEventCreated)
+          : row.lastEventCreated
+      subscriptions.set(row.id, { ...row, lastEventCreated })
       return 'written'
     },
     getSubscriptionsByUserId: async (userId) =>
@@ -39,6 +50,13 @@ export const memoryBillingStore = (): BillingStore => {
     relinkCustomer: async (stripeCustomerId, userId) => {
       const prevUserId = customerByStripeId.get(stripeCustomerId)
       if (prevUserId === undefined) return
+      // Displace a row the target userId already owns (1:1 user↔customer)
+      // and drop its reverse index — otherwise customerByStripeId for the
+      // displaced customer would keep resolving to this user.
+      const displaced = customers.get(userId)
+      if (displaced && displaced.stripeCustomerId !== stripeCustomerId) {
+        customerByStripeId.delete(displaced.stripeCustomerId)
+      }
       const customer = customers.get(prevUserId)
       customers.delete(prevUserId)
       if (customer) customers.set(userId, { ...customer, userId })

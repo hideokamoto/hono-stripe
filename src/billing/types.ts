@@ -65,7 +65,14 @@ export interface BillingStore {
   getSubscriptionsByUserId(userId: string): Promise<BillingSubscriptionRow[]>
   getCustomerByUserId(userId: string): Promise<BillingCustomerRow | null>
   getCustomerByStripeId(stripeCustomerId: string): Promise<BillingCustomerRow | null>
-  /** Re-owner a customer and cascade userId to all its subscription rows. */
+  /**
+   * Re-owner a customer and cascade userId to all its subscription rows.
+   * Two-phase (customer row, then subscription cascade) — `SqlExecutor`
+   * has no transaction primitive, so a reader may briefly observe a
+   * partially applied relink. `syncFromStripe` is the recovery path.
+   * If the target userId already owns a different customer row, that row
+   * is displaced (1:1 user↔customer) and left unlinked.
+   */
   relinkCustomer(stripeCustomerId: string, userId: string): Promise<void>
 }
 

@@ -7,7 +7,7 @@ import type { BillingStore, BillingSubscriptionRow } from '../src/billing/types'
 import { memoryBillingStore } from '../src/billing/store/memory'
 import { sqlBillingStore } from '../src/billing/store/sql'
 import { BILLING_SCHEMA_SQLITE } from '../src/billing/schema'
-import { billingSyncHandlers } from '../src/billing/sync'
+import { billingSyncHandlers, mapSubscription } from '../src/billing/sync'
 
 /**
  * Spec-vector replay tests.
@@ -227,5 +227,64 @@ describe('sync engine — userId rules (spec/alloy/billing_link.als)', () => {
     const event = { id: 'evt_c', type: 'checkout.session.completed', created: 5, data: { object: session } } as unknown as Stripe.CheckoutSessionCompletedEvent
     await handlers['checkout.session.completed']?.(event, c)
     expect((await store.getCustomerByUserId('u_ref'))?.stripeCustomerId).toBe('cus_1')
+  })
+
+  it('resolves userId from subscription.metadata when the session carries only a subscription id', async () => {
+    // Real webhook payloads are not expanded — session.subscription is a
+    // bare id, so the spec's third tier needs an API read to be reachable.
+    const store = memoryBillingStore()
+    const handlers = billingSyncHandlers({ store })
+    const sub = { ...makeSub(1), metadata: { user_id: 'u_sub' } }
+    const stripe = {
+      subscriptions: { retrieve: vi.fn().mockResolvedValue(sub) },
+      customers: { retrieve: vi.fn().mockResolvedValue({ id: 'cus_1', deleted: false, metadata: {} }) },
+    } as unknown as Stripe
+    const c = { get: () => stripe } as never
+    const session = {
+      id: 'cs_1', mode: 'subscription',
+      client_reference_id: null,
+      metadata: {},
+      customer: 'cus_1',
+      subscription: 'sub_1', // string, not expanded — the production shape
+    }
+    const event = { id: 'evt_s', type: 'checkout.session.completed', created: 5, data: { object: session } } as unknown as Stripe.CheckoutSessionCompletedEvent
+    await handlers['checkout.session.completed']?.(event, c)
+    expect(stripe.subscriptions.retrieve).toHaveBeenCalled()
+    expect((await store.getCustomerByUserId('u_sub'))?.stripeCustomerId).toBe('cus_1')
+  })
+
+  it('resolves userId from customer.metadata via the store last', async () => {
+    const store = memoryBillingStore()
+    const handlers = billingSyncHandlers({ store })
+    const stripe = {
+      subscriptions: { retrieve: vi.fn().mockResolvedValue({ ...makeSub(1), metadata: {} }) },
+      customers: { retrieve: vi.fn().mockResolvedValue({ id: 'cus_1', deleted: false, metadata: { user_id: 'u_cus' } }) },
+    } as unknown as Stripe
+    const c = { get: () => stripe } as never
+    const session = {
+      id: 'cs_1', mode: 'subscription',
+      client_reference_id: null,
+      metadata: {},
+      customer: 'cus_1',
+      subscription: 'sub_1',
+    }
+    const event = { id: 'evt_cu', type: 'checkout.session.completed', created: 5, data: { object: session } } as unknown as Stripe.CheckoutSessionCompletedEvent
+    await handlers['checkout.session.completed']?.(event, c)
+    expect((await store.getCustomerByUserId('u_cus'))?.stripeCustomerId).toBe('cus_1')
+  })
+
+  it('mapSubscription sums quantities across items', async () => {
+    const multiItem = {
+      ...makeSub(1),
+      items: {
+        object: 'list',
+        data: [
+          { id: 'si_1', price: { id: 'price_a' }, quantity: 2, current_period_end: 1_700_000_000 },
+          { id: 'si_2', price: { id: 'price_b' }, quantity: 5, current_period_end: 1_700_000_001 },
+        ],
+      },
+    } as unknown as Stripe.Subscription
+    expect(mapSubscription(multiItem, 'u1', 0).quantity).toBe(7)
+    expect(mapSubscription(multiItem, 'u1', 0).priceIds).toEqual(['price_a', 'price_b'])
   })
 })
