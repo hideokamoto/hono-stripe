@@ -166,3 +166,25 @@ These are obligations the implementation must satisfy:
 | No orphan paid subs | `resolveUserIdForSubscription` + `warn` | `test/billing_sync.test.ts` |
 | Deterministic pick | `pickBestSubscription` in `src/billing/entitlement.ts` | `test/billing_entitlement.test.ts` |
 | userId resolution order | `checkout.session.completed` handler | `test/billing_sync.test.ts` |
+
+## `ec` — cart storage on a weak KVS (spec/quint/cart_ops.qnt, spec/alloy/cart_link.als)
+
+Design: one item key per cart line (`cart:{id}:item:{priceId}`), all
+mutations as pure puts/deletes (no read-modify-write), checkout =
+enumerate → charge → delete only snapshotted keys. `view` lags `truth`
+(pending writes) to model edge-cache staleness.
+
+| Property | Result |
+| -- | -- |
+| `deletesOnlySnapshotted` | ✅ holds — post-snapshot adds always survive |
+| `chargesOnlyVisible` | ✅ holds — only snap-time visible keys are charged |
+| `divergenceOnlyPending` | ✅ sim 30k no violation (bounded verify timed out; holds by construction) |
+| `noStaleCharge` | ⚠️ counterexample exists — **a stale snapshot can charge an item the user already removed**. Documented boundary of KVS carts; mitigate by showing server-side line items at checkout confirmation (Stripe Checkout does) and/or a pre-charge re-read. |
+
+Alloy scenarios (all SAT — app-level rules the layout cannot enforce):
+
+- `TwoCartsOneUser` — login must merge anon + user carts
+- `OrphanCheckout` — checkout.user must be populated (billing's orphan hazard)
+- `MergeConflict` — same priceId across carts needs a merge rule (newer addedAt)
+- `EmptyCheckout` — refuse checkout on empty cart
+- `DuplicatePriceInCart` — key line items by priceId in the app
