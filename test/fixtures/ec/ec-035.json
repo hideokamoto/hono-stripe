@@ -1,0 +1,54 @@
+{
+ "name": "ec-035",
+ "events": [
+  {
+   "op": "checkoutSnap",
+   "it": "p1"
+  },
+  {
+   "op": "removeItem",
+   "it": "p1"
+  },
+  {
+   "op": "applyWrites"
+  },
+  {
+   "op": "checkoutCommit"
+  },
+  {
+   "op": "setItem",
+   "it": "p1",
+   "qty": 1
+  },
+  {
+   "op": "checkoutSnap"
+  },
+  {
+   "op": "applyWrites"
+  },
+  {
+   "op": "expireLine",
+   "it": "p1"
+  },
+  {
+   "op": "checkoutCommit",
+   "it": "p2"
+  }
+ ],
+ "final": {
+  "truth": {
+   "p1": 0
+  },
+  "view": {
+   "p1": 1
+  },
+  "charged": [
+   []
+  ],
+  "expired": [
+   "p1"
+  ],
+  "lostPostSnapWrites": [],
+  "staleCharge": false
+ }
+}
