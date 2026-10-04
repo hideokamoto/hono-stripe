@@ -201,14 +201,16 @@ Alloy scenarios (all SAT — app-level rules the layout cannot enforce):
 
 | Design requirement | Implementation | Test |
 | -- | -- | -- |
-| Pure put/delete mutations, no read-modify-write | `CartStore` contract (`src/ec/types.ts`), `memoryCartStore` | `test/ec_cart.test.ts` |
+| Pure put/delete mutations, no read-modify-write | `CartStore` contract (`src/ec/types.ts`), `memoryCartStore`, `kvCartStore` | `test/helpers/cartStoreContract.ts` (run against every adapter) |
 | Checkout = enumerate → snapshot → delete only snapshotted keys | `checkout` + `drain` (`src/ec/index.ts`) | `test/ec_cart.test.ts` |
 | Webhook drain on `checkout.session.completed` (payment only) | `handlers` — `client_reference_id` carries the cart id | `test/ec_cart.test.ts` |
+| `list` enumerates every line (no truncation) | `kvCartStore` paginates to `list_complete` | `test/ec_store_kv.test.ts` |
 | Stale-charge hazard (documented boundary, not enforceable) | `CartStore` JSDoc; `warn` on truncated drain | — |
-| Post-snapshot re-add loss (documented boundary) | `drain`/`handlers` JSDoc — `noPostSnapWriteLoss` | — |
-| TTL expiry charge (documented boundary) | `CartStore` JSDoc — TTL guidance for adapters (`noExpiryCharge`) | — |
-| `onDrained` = charged snapshot, never re-enumeration (`fulfilledExactlyCharged`) | `handlers` callback passes session line items | `test/ec_cart.test.ts` |
+| Post-snapshot re-add loss (documented boundary) | `drain`/`handlers` JSDoc — `noPostSnapWriteLoss` | `test/ec_vectors.test.ts` (boundary vectors) |
+| TTL expiry charge (documented boundary) | `CartStore` + `kvCartStore` JSDoc — TTL guidance (`noExpiryCharge`) | `test/ec_vectors.test.ts` |
+| `onDrained` = charged snapshot, never re-enumeration (`fulfilledExactlyCharged`) | `handlers` callback passes session line items | `test/ec_ondrained.test.ts` |
 | Recurring price in cart → Stripe rejects session create (documented boundary) | `CartCheckoutParams.mode` is `'payment'` | — |
+| Schedule coverage (incl. boundary schedules) | — | `test/fixtures/ec/*.json` (Quint MBT traces via `spec/tools/itf2cartvector.mjs`) |
 | Login merge anon + user carts (`TwoCartsOneUser`) | `merge` | `test/ec_cart.test.ts` |
 | Merge conflict → newer addedAt wins (`MergeConflict`) | `merge` addedAt comparison | `test/ec_cart.test.ts` |
 | Refuse empty checkout (`EmptyCheckout`) | `checkout` throws | `test/ec_cart.test.ts` |
