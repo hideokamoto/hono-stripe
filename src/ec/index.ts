@@ -3,6 +3,7 @@ import type Stripe from 'stripe'
 import type { StripeWebhookHandlers } from '../webhooks'
 import type {
   CartCheckout,
+  CartCheckoutLineItem,
   CartCheckoutOptions,
   CartItem,
   CartStore,
@@ -25,6 +26,23 @@ export interface StripeCartOptions {
    * OrphanCheckout).
    */
   user: (c: Context) => string | Promise<string>
+  /**
+   * Fulfillment handoff — invoked once per drained payment session, after
+   * the drain completes, with the session's line items.
+   *
+   * Contract (spec `fulfilledExactlyCharged`): `items` is the charged
+   * snapshot itself — the session's `line_items` — never a re-enumeration
+   * of the cart. A post-snapshot add survives in the cart but is not in
+   * `items` (it was not charged).
+   *
+   * Throwing propagates as a 500 so Stripe retries the delivery — a
+   * fulfillment failure must never be acknowledged.
+   */
+  onDrained?: (args: {
+    c: Context
+    cartId: string
+    items: CartCheckoutLineItem[]
+  }) => void | Promise<void>
 }
 
 export interface StripeCart {
@@ -65,10 +83,15 @@ export interface StripeCart {
    */
   checkout: (c: Context, options?: CartCheckoutOptions) => Promise<CartCheckout>
   /**
-   * Delete exactly the snapshotted price ids — post-snapshot adds survive
-   * (spec: `deletesOnlySnapshotted`). Idempotent. Normally invoked by
-   * `handlers` on `checkout.session.completed`; call directly only when
-   * wiring your own webhook in request context.
+   * Delete exactly the snapshotted price ids — post-snapshot adds on OTHER
+   * priceIds survive (spec: `deletesOnlySnapshotted`). Idempotent.
+   *
+   * Boundary (spec `noPostSnapWriteLoss`): a line re-added while its
+   * checkout was in-flight shares the snapshotted priceId and is deleted
+   * too — drain cannot tell it apart from the snapshotted line.
+   *
+   * Normally invoked by `handlers` on `checkout.session.completed`; call
+   * directly only when wiring your own webhook in request context.
    */
   drain: (c: Context, priceIds: string[]) => Promise<void>
   /**
@@ -97,6 +120,7 @@ export const stripeCart = (options: StripeCartOptions): StripeCart => {
       const store = storeOf(c)
       // Paginate the whole snapshot — a truncated drain would ack the event
       // and leave the overflow lines in the cart permanently.
+      const drained: CartCheckoutLineItem[] = []
       let startingAfter: string | undefined
       do {
         const page = await stripe.checkout.sessions.listLineItems(session.id, {
@@ -105,10 +129,16 @@ export const stripeCart = (options: StripeCartOptions): StripeCart => {
         })
         for (const item of page.data) {
           const priceId = item.price?.id
-          if (priceId) await store.delete(cartId, priceId)
+          if (priceId) {
+            await store.delete(cartId, priceId)
+            drained.push({ price: priceId, quantity: item.quantity ?? 1 })
+          }
         }
         startingAfter = page.has_more ? page.data[page.data.length - 1]?.id : undefined
       } while (startingAfter)
+      // fulfilledExactlyCharged: hand fulfillment the session's line items
+      // — the charged snapshot — never a re-enumerated cart list.
+      await options.onDrained?.({ c, cartId, items: drained })
     },
   }
 
@@ -182,6 +212,10 @@ export const stripeCart = (options: StripeCartOptions): StripeCart => {
       }
     },
 
+    // Boundary (spec `noPostSnapWriteLoss`): drain deletes by priceId, so a
+    // line re-ADDED while its checkout was in-flight is deleted too — the
+    // store cannot tell it apart from the snapshotted line. Adds on other
+    // priceIds always survive.
     drain: async (c, priceIds) => {
       const store = storeOf(c)
       const cartId = await cartIdOf(c)
@@ -205,3 +239,5 @@ export type {
 } from './types'
 export { resolveCartStore } from './types'
 export { memoryCartStore } from './store/memory'
+export { kvCartStore } from './store/kv'
+export type { CartKVNamespace, KvCartStoreOptions } from './store/kv'

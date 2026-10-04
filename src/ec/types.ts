@@ -31,6 +31,11 @@ export interface CartItem {
  * charge a line the user already removed (documented counterexample in
  * `spec/README.md` — `noStaleCharge`). Mitigate by confirming line items
  * server-side — Stripe Checkout's confirmation page already does this.
+ *
+ * Stores that expire lines (TTL'd carts, e.g. KV `expirationTtl`) add a
+ * second hazard: a line can expire between snapshot and charge and still
+ * be charged (`noExpiryCharge`). Bind any cart TTL far above the checkout
+ * completion window — hours-to-days, never minutes.
  */
 export interface CartStore {
   /** Enumerate a cart's lines. Weak stores may serve a stale view. */
