@@ -1,0 +1,25 @@
+{
+ "name": "sync-13",
+ "policy": "fetch_tie_refetch",
+ "storeAtomic": false,
+ "snapshots": {
+  "1": 1,
+  "2": 2
+ },
+ "events": [
+  "emit",
+  "deliver1",
+  "emit",
+  "deliver2",
+  "begin2",
+  "commit2",
+  "begin1",
+  "commit1"
+ ],
+ "final": {
+  "truth": 2,
+  "mirrorVersion": 2,
+  "mirrorCreated": 1,
+  "quiescent": true
+ }
+}

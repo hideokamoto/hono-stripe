@@ -1,0 +1,23 @@
+{
+ "name": "sync-02",
+ "policy": "fetch_tie_refetch",
+ "storeAtomic": true,
+ "snapshots": {
+  "1": 1,
+  "2": 2
+ },
+ "events": [
+  "emit",
+  "deliver1",
+  "emit",
+  "deliver2",
+  "finish2",
+  "finish1"
+ ],
+ "final": {
+  "truth": 2,
+  "mirrorVersion": 2,
+  "mirrorCreated": 1,
+  "quiescent": true
+ }
+}
