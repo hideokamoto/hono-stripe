@@ -1,0 +1,63 @@
+{
+ "name": "ec-010",
+ "events": [
+  {
+   "op": "removeItem",
+   "it": "p1"
+  },
+  {
+   "op": "checkoutSnap"
+  },
+  {
+   "op": "checkoutCommit",
+   "it": "p1"
+  },
+  {
+   "op": "setItem",
+   "it": "p2",
+   "qty": 1
+  },
+  {
+   "op": "applyWrites"
+  },
+  {
+   "op": "expireLine",
+   "it": "p2"
+  },
+  {
+   "op": "setItem",
+   "it": "p1",
+   "qty": 1
+  },
+  {
+   "op": "setItem",
+   "it": "p2",
+   "qty": 3
+  },
+  {
+   "op": "checkoutSnap"
+  },
+  {
+   "op": "checkoutCommit"
+  }
+ ],
+ "final": {
+  "truth": {
+   "p1": 1
+  },
+  "view": {
+   "p1": 0
+  },
+  "charged": [
+   [],
+   [
+    "p2"
+   ]
+  ],
+  "expired": [
+   "p2"
+  ],
+  "lostPostSnapWrites": [],
+  "staleCharge": false
+ }
+}

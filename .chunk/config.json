@@ -2,7 +2,7 @@
   "commands": [
     {
       "name": "spec-typecheck",
-      "run": "quint typecheck spec/quint/billing_sync.qnt && quint typecheck spec/quint/billing_sync_2ev.qnt",
+      "run": "quint typecheck spec/quint/billing_sync.qnt && quint typecheck spec/quint/billing_sync_2ev.qnt && quint typecheck spec/quint/cart_ops.qnt",
       "remote": true
     },
     {
@@ -17,7 +17,17 @@
     },
     {
       "name": "spec-alloy",
-      "run": "java -jar ~/tools/alloy.jar exec spec/alloy/billing_link.als",
+      "run": "java -jar ~/tools/alloy.jar exec spec/alloy/billing_link.als && java -jar ~/tools/alloy.jar exec spec/alloy/cart_link.als",
+      "remote": true
+    },
+    {
+      "name": "spec-ec-sim",
+      "run": "for i in divergenceOnlyPending deletesOnlySnapshotted chargesOnlyVisible fulfilledExactlyCharged noStaleCharge noPostSnapWriteLoss noExpiryCharge; do echo ===$i; quint run spec/quint/cart_ops.qnt --invariant=$i --max-steps=15 --max-samples=30000 2>&1 | grep -E 'violation|No violation'; done",
+      "remote": true
+    },
+    {
+      "name": "spec-ec-verify",
+      "run": "for i in divergenceOnlyPending deletesOnlySnapshotted chargesOnlyVisible fulfilledExactlyCharged noStaleCharge noPostSnapWriteLoss noExpiryCharge; do echo ===$i; quint verify spec/quint/cart_ops.qnt --invariant=$i --max-steps=8 2>&1 | tail -2; done",
       "remote": true
     }
   ],

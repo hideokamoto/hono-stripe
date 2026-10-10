@@ -172,14 +172,19 @@ These are obligations the implementation must satisfy:
 Design: one item key per cart line (`cart:{id}:item:{priceId}`), all
 mutations as pure puts/deletes (no read-modify-write), checkout =
 enumerate → charge → delete only snapshotted keys. `view` lags `truth`
-(pending writes) to model edge-cache staleness.
+(pending writes) to model edge-cache staleness. TTL expiry is modeled as a
+store-side delete joining `pending` — an expired key keeps diverging until
+the edge propagates it.
 
 | Property | Result |
 | -- | -- |
-| `deletesOnlySnapshotted` | ✅ holds — post-snapshot adds always survive |
-| `chargesOnlyVisible` | ✅ holds — only snap-time visible keys are charged |
-| `divergenceOnlyPending` | ✅ sim 30k no violation (bounded verify timed out; holds by construction) |
-| `noStaleCharge` | ⚠️ counterexample exists — **a stale snapshot can charge an item the user already removed**. Documented boundary of KVS carts; mitigate by showing server-side line items at checkout confirmation (Stripe Checkout does) and/or a pre-charge re-read. |
+| `deletesOnlySnapshotted` | ✅ verify — no violation through depth 8; drain can only remove keys it snapshotted |
+| `chargesOnlyVisible` | ✅ verify — no violation through depth 8; only snap-time visible keys are charged |
+| `divergenceOnlyPending` | ✅ sim 30k no violation (bounded verify timed out; holds by construction) — expiry joins `pending`, so divergence stays bounded to in-flight keys |
+| `fulfilledExactlyCharged` | ✅ verify — no violation through depth 8; fulfillment batches are exactly the charged snapshots (the `onDrained` contract: hand the callback the session's line items, never a re-enumerated cart list) |
+| `noStaleCharge` | ⚠️ counterexample (Apalache verified) — **a stale snapshot can charge an item the user already removed**. Documented boundary of KVS carts; mitigate by showing server-side line items at checkout confirmation (Stripe Checkout does) and/or a pre-charge re-read. |
+| `noPostSnapWriteLoss` | ⚠️ counterexample (Apalache verified) — **re-adding a snapshotted priceId while checkout is in-flight loses that write**. Drain deletes by key and cannot distinguish the snapshotted line from a post-snapshot re-add. Post-snapshot adds on OTHER priceIds still survive. Rare (checkout window); acceptable boundary — key versioning would fix it at contract cost. |
+| `noExpiryCharge` | ⚠️ counterexample (Apalache verified) — **a TTL'd line can expire between snap and commit and still be charged**. Bound cart TTL far above the checkout completion window (KV `expirationTtl` in hours/days, checkout in minutes); same mitigation class as `noStaleCharge`. |
 
 Alloy scenarios (all SAT — app-level rules the layout cannot enforce):
 
@@ -188,15 +193,24 @@ Alloy scenarios (all SAT — app-level rules the layout cannot enforce):
 - `MergeConflict` — same priceId across carts needs a merge rule (newer addedAt)
 - `EmptyCheckout` — refuse checkout on empty cart
 - `DuplicatePriceInCart` — key line items by priceId in the app
+- `RecurringLineInPaymentSession` — a `mode: 'payment'` session CAN carry a recurring-priced line; ec only sees priceId strings so it cannot pre-filter — Stripe rejects at session create. Recurring prices belong to billing's flow, not carts (documented boundary)
+- `PostSnapshotReadd` — the relational shape of `noPostSnapWriteLoss`: cart holds a NEW Item atom with a priceId the session already snapshotted — drain deletes it anyway
+- `FulfillmentDrift` — cart contents at fulfill time can differ from the snapshot; fulfillment must ship `session.items`, never a fresh cart enumeration
 
 ## `ec` implementation coverage
 
 | Design requirement | Implementation | Test |
 | -- | -- | -- |
-| Pure put/delete mutations, no read-modify-write | `CartStore` contract (`src/ec/types.ts`), `memoryCartStore` | `test/ec_cart.test.ts` |
+| Pure put/delete mutations, no read-modify-write | `CartStore` contract (`src/ec/types.ts`), `memoryCartStore`, `kvCartStore` | `test/helpers/cartStoreContract.ts` (run against every adapter) |
 | Checkout = enumerate → snapshot → delete only snapshotted keys | `checkout` + `drain` (`src/ec/index.ts`) | `test/ec_cart.test.ts` |
 | Webhook drain on `checkout.session.completed` (payment only) | `handlers` — `client_reference_id` carries the cart id | `test/ec_cart.test.ts` |
+| `list` enumerates every line (no truncation) | `kvCartStore` paginates to `list_complete` | `test/ec_store_kv.test.ts` |
 | Stale-charge hazard (documented boundary, not enforceable) | `CartStore` JSDoc; `warn` on truncated drain | — |
+| Post-snapshot re-add loss (documented boundary) | `drain`/`handlers` JSDoc — `noPostSnapWriteLoss` | `test/ec_vectors.test.ts` (boundary vectors) |
+| TTL expiry charge (documented boundary) | `CartStore` + `kvCartStore` JSDoc — TTL guidance (`noExpiryCharge`) | `test/ec_vectors.test.ts` |
+| `onDrained` = charged snapshot, never re-enumeration (`fulfilledExactlyCharged`) | `handlers` callback passes session line items | `test/ec_ondrained.test.ts` |
+| Recurring price in cart → Stripe rejects session create (documented boundary) | `CartCheckoutParams.mode` is `'payment'` | — |
+| Schedule coverage (incl. boundary schedules) | — | `test/fixtures/ec/*.json` (Quint MBT traces via `spec/tools/itf2cartvector.mjs`) |
 | Login merge anon + user carts (`TwoCartsOneUser`) | `merge` | `test/ec_cart.test.ts` |
 | Merge conflict → newer addedAt wins (`MergeConflict`) | `merge` addedAt comparison | `test/ec_cart.test.ts` |
 | Refuse empty checkout (`EmptyCheckout`) | `checkout` throws | `test/ec_cart.test.ts` |

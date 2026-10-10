@@ -8,7 +8,8 @@ import type { CartItem, CartStore } from '../types'
 export const memoryCartStore = (): CartStore => {
   const carts = new Map<string, Map<string, CartItem>>()
   return {
-    list: async (cartId) => [...(carts.get(cartId)?.values() ?? [])],
+    list: async (cartId) =>
+      [...(carts.get(cartId)?.values() ?? [])].map((item) => ({ ...item })),
     put: async (cartId, item) => {
       let cart = carts.get(cartId)
       if (!cart) {

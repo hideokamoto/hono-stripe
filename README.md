@@ -10,6 +10,8 @@ One install covers the whole server-side Stripe integration:
 | `hono-stripe/webhook` | `stripeWebhook` — verify + **typed per-event routing** + delivery dedupe (`KV`, in-memory, or your own store) |
 | `hono-stripe/testing` | Real-signature webhook fixtures for tests and local dev — no `stripe listen` required |
 | `hono-stripe/ui` | hono/jsx (HonoX) components that render a working Payment Element form — no React |
+| `hono-stripe/billing` | `stripeBilling` — local subscription mirror + `requirePlan` gating, with a model-checked webhook sync protocol |
+| `hono-stripe/ec` | `stripeCart` — shopping cart on weak KV stores (one key per line), cart→Checkout→drain with fulfillment handoff |
 
 It handles the edge-runtime gotchas for you (`createFetchHttpClient`, async
 webhook verification via WebCrypto) and keeps `stripe`/`hono` as peer
@@ -242,6 +244,60 @@ userId resolution order is `client_reference_id` → session metadata →
 subscription metadata → customer metadata. Cloudflare Workers KV cannot be a
 correctness-complete mirror (no atomic check-and-write) — use the SQL store as
 source of truth and `syncFromStripe()` for reconciliation.
+
+## Carts — `hono-stripe/ec`
+
+A shopping-cart layer designed for weak key-value stores (Workers KV, edge
+caches): one KV key per cart line (`cart:{id}:item:{priceId}`), pure
+put/delete mutations (never read-modify-write), checkout = snapshot →
+charge → drain only snapshotted keys. The protocol is model-checked for
+concurrent tabs, stale reads, and mid-checkout writes — see `spec/`.
+
+```ts
+import { stripeCart, kvCartStore } from 'hono-stripe/ec'
+import { stripeWebhook } from 'hono-stripe/webhook'
+
+const cart = stripeCart({
+  store: (c) => kvCartStore(c.env.CART, { ttlSeconds: 86_400 }),
+  user: (c) => c.get('authUser')?.id ?? c.get('sessionId'),
+  // Runs after a payment session drains — items IS the charged snapshot.
+  onDrained: async ({ cartId, items }) => {
+    await createOrder(cartId, items)
+  },
+})
+
+app.post('/cart/add', async (c) => {
+  await cart.set(c, 'price_abc', 2)
+  return c.json(await cart.items(c))
+})
+
+app.post('/checkout', async (c) => {
+  const { params } = await cart.checkout(c, {
+    params: { success_url: 'https://app/ok', cancel_url: 'https://app/cart' },
+  })
+  const session = await getStripe(c).checkout.sessions.create(params)
+  return c.redirect(session.url!)
+})
+
+// Drains the snapshotted lines on checkout.session.completed, then calls
+// onDrained with the session's line items.
+app.post('/webhook', stripeWebhook({ on: cart.handlers }))
+```
+
+| Export | Purpose |
+| -- | -- |
+| `stripeCart(options)` | Factory: `items`, `set`, `remove`, `clear`, `merge`, `checkout`, `drain`, `handlers` |
+| `kvCartStore(kv, { keyPrefix?, ttlSeconds? })` | Workers KV adapter — one key per line, `expirationTtl` cleanup, full `list` pagination |
+| `memoryCartStore()` | Dev/tests — single-process only |
+
+`checkout` refuses empty carts and stamps `client_reference_id` so the
+webhook drains the right cart; `merge(c, anonCartId)` folds an anonymous
+cart into the user's on login. Known boundary on weak stores: a stale
+snapshot can charge a line the user already removed, and a TTL'd line can
+expire mid-checkout — Stripe Checkout's confirmation page shows the real
+line items, so surface them server-side. Recurring prices belong to
+`hono-stripe/billing`, not carts — checkout sessions are `mode: 'payment'`
+only.
 
 ## Payment UI — `hono-stripe/ui`
 
