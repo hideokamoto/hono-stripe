@@ -139,6 +139,33 @@ describe('stripeWebhook', () => {
     expect(handler).toHaveBeenCalledTimes(2)
   })
 
+  it('does not dedupe-record a handler that returned a non-2xx Response', async () => {
+    // Throwing is not the only failure shape — a handler may `return
+    // c.json(..., 500)`. Stripe retries non-2xx responses, so recording the
+    // event id here would swallow the retry as a duplicate.
+    let fail = true
+    const handler = vi.fn((_event, c) =>
+      fail ? c.json({ error: 'downstream' }, 500) : undefined,
+    )
+    const app = buildApp({
+      dedupe: memoryEventStore(),
+      on: { 'payment_intent.succeeded': handler },
+    })
+
+    const first = await postEvent(app, 'payment_intent.succeeded', { id: 'pi_1' }, 'evt_r500')
+    expect(first.status).toBe(500)
+
+    fail = false
+    const retry = await postEvent(app, 'payment_intent.succeeded', { id: 'pi_1' }, 'evt_r500')
+    expect(retry.status).toBe(200)
+    expect(handler).toHaveBeenCalledTimes(2)
+
+    // Once acknowledged with 2xx, further deliveries dedupe normally.
+    const dup = await postEvent(app, 'payment_intent.succeeded', { id: 'pi_1' }, 'evt_r500')
+    expect(await dup.json()).toEqual({ received: true, duplicate: true })
+    expect(handler).toHaveBeenCalledTimes(2)
+  })
+
   it('reads the webhook secret from process.env when secret is omitted', async () => {
     process.env.STRIPE_WEBHOOK_SECRET = WEBHOOK_SECRET
     const handler = vi.fn()

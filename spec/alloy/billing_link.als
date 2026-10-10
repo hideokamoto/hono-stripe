@@ -27,6 +27,7 @@ sig SubRow {
   customerId: one StripeCustomerId, // Stripe's own owner reference
   userId: lone UserId,              // denormalized; none = unresolvable link
   status: one Status,
+  prices: set PriceId,              // items[].price.id on the subscription
   lastEventCreated: one Int
 }
 
@@ -65,6 +66,38 @@ run TwoEntitledSubs {
   some u: UserId |
     #{ s: SubRow | s.userId = u and s.status in entitledStatus } > 1
 } for 6
+
+// ---- check 3b: gate fairness ----------------------------------------------
+// TwoEntitledSubs is a SCENARIO; this is the PROPERTY it breaks. A plan gate
+// that consults only the deterministic "best" pick can deny a user who holds
+// another entitled sub matching the required plan — the pick is for display,
+// not for gating.
+//
+// Model: `best` picks the entitled sub with the highest lastEventCreated
+// (id tie-break omitted — the counterexample does not need it). A gate over
+// price ids is represented by requiredPlan: the required PriceId set.
+sig PriceId {}
+
+fun entitled[u: UserId]: set SubRow {
+  { s: SubRow | s.userId = u and s.status in entitledStatus }
+}
+
+fun bestOf[subs: set SubRow]: set SubRow {
+  { s: subs | no s2: subs - s | s2.lastEventCreated > s.lastEventCreated }
+}
+
+// The buggy semantics, asserted so Alloy produces the counterexample:
+// "if ANY entitled sub carries a required price, the BEST pick carries one."
+assert GateFairness {
+  all u: UserId, req: set PriceId |
+    (some s: entitled[u] | some (s.prices & req)) implies
+      some (bestOf[entitled[u]].prices & req)
+}
+check GateFairness for 6
+// EXPECTED: counterexample (older sub_pro + newer sub_basic, gate 'pro').
+// Derived requirement: requirePlan must evaluate every entitled sub's
+// prices — getState surfaces them as `entitledPlans`, and the middleware
+// intersects that set with the required plans.
 
 // ---- check 4: linkage source conflicts -----------------------------------
 // userId resolution order:

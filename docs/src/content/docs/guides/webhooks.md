@@ -43,9 +43,9 @@ app.post('/webhook', stripeWebhook({
 
 - Return a `Response` (`c.json(...)`, `c.text(...)`, …) to control the reply,
   or nothing for the default `200 { received: true }`.
-- Throwing surfaces as a `500` via Hono error handling → Stripe retries. Since
-  dedupe records only **after** a successful handler, retried deliveries are
-  processed normally.
+- Failing either way — throwing **or returning a non-2xx `Response`** — makes
+  Stripe retry. Dedupe records the event id only on a 2xx-equivalent
+  outcome, so retried deliveries are processed normally.
 
 ## Deduplication stores
 

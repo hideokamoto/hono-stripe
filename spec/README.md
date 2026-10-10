@@ -15,7 +15,7 @@ not just the code.
 |---|---|
 | `quint/billing_sync.qnt` | Full sync protocol: event emission, duplicate + out-of-order delivery, dedupe store, handler failures + redelivery, concurrent in-flight handlers, four write policies, atomic vs non-atomic stores. Owns the dedupe / at-least-once questions. |
 | `quint/billing_sync_2ev.qnt` | Minimal scalar model: one subscription, two same-second events. All concurrency and tie mechanisms, no maps. The model Apalache can exhaust — this is the canonical correctness claim. |
-| `alloy/billing_link.als` | Schema relational invariants + userId linkage rules. Counterexamples define requirements the sync code must enforce (the schema alone cannot). |
+| `alloy/billing_link.als` | Schema relational invariants + userId linkage rules + gate fairness. Counterexamples define requirements the sync/entitlement code must enforce (the schema alone cannot). |
 
 ## Running
 
@@ -143,6 +143,10 @@ These are obligations the implementation must satisfy:
    `lastEventCreated` desc, then id).
 8. **userId resolution order is specified**: `client_reference_id` >
    `session.metadata` > `subscription.metadata` > `customer.metadata`.
+9. **Plan gates evaluate every entitled subscription** (`GateFairness`):
+   the "best" pick is a display rule, not a gate — a user holding any
+   entitled subscription matching a required plan must pass. `getState`
+   surfaces `entitledPlans` for this.
 
 ## Limitations
 
@@ -165,4 +169,5 @@ These are obligations the implementation must satisfy:
 | Relink cascade | `relinkCustomer` in both adapters | `test/billing_store.test.ts` |
 | No orphan paid subs | `resolveUserIdForSubscription` + `warn` | `test/billing_sync.test.ts` |
 | Deterministic pick | `pickBestSubscription` in `src/billing/entitlement.ts` | `test/billing_entitlement.test.ts` |
+| Gate fairness (any-match) | `entitledPlans` + `requirePlanMiddleware` | `test/billing_entitlement.test.ts` |
 | userId resolution order | `checkout.session.completed` handler | `test/billing_sync.test.ts` |

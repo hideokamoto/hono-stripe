@@ -52,8 +52,15 @@ export const matchPlan = (
 export interface BillingState {
   userId: string
   customerId: string | null
-  /** The matched plan key, or null. */
+  /** The matched plan key of the best subscription, or null. */
   plan: string | null
+  /**
+   * Every plan the user is entitled to — the matched plan of EACH
+   * subscription whose status ∈ allowedStatuses. Unlike `plan` (the single
+   * best subscription), this covers users holding multiple subscriptions.
+   * `requirePlan` gates on this set.
+   */
+  entitledPlans: string[]
   /** Best subscription's Stripe status, or null when none exists. */
   status: string | null
   /** status ∈ allowedStatuses (default: active, trialing). */
@@ -62,6 +69,27 @@ export interface BillingState {
   currentPeriodEnd: number | null
   cancelAtPeriodEnd: boolean
   trialEnd: number | null
+}
+
+/**
+ * Variables injected into the Hono context by `billing.middleware()` and
+ * `requirePlan` — pair with {@link BillingEnv} so `c.var.billing` is typed.
+ */
+export type BillingVariables = {
+  billing: BillingState
+}
+
+/**
+ * Hono `Env` fragment contributed by the billing layer.
+ *
+ * @example
+ * ```ts
+ * const app = new Hono<{ Bindings: Bindings } & StripeEnv & BillingEnv>()
+ * app.get('/pro', billing.requirePlan('pro'), (c) => c.json(c.var.billing))
+ * ```
+ */
+export type BillingEnv = {
+  Variables: BillingVariables
 }
 
 export interface GetStateOptions {
@@ -81,10 +109,19 @@ export const getBillingState = async (
     store.getCustomerByUserId(userId),
   ])
   const best = pickBestSubscription(subs)
+  const entitledPlans = [
+    ...new Set(
+      subs
+        .filter((s) => allowed.has(s.status))
+        .map((s) => matchPlan(s.priceIds, plans))
+        .filter((p): p is string => p !== null),
+    ),
+  ]
   return {
     userId,
     customerId: customer?.stripeCustomerId ?? best?.stripeCustomerId ?? null,
     plan: best ? matchPlan(best.priceIds, plans) : null,
+    entitledPlans,
     status: best?.status ?? null,
     entitled: best !== null && allowed.has(best.status),
     subscription: best,
@@ -97,7 +134,11 @@ export const getBillingState = async (
 export interface RequirePlanOptions {
   /** Custom denial response. Default: 403 JSON `{ error, required, current }`. */
   onDenied?: (c: Context, state: BillingState) => Response | Promise<Response>
-  /** Statuses that count as entitled. Default: ['active', 'trialing']. */
+  /**
+   * Statuses that count as entitled. Default: ['active', 'trialing'].
+   * Applied when `getState` computes `entitledPlans` — the middleware itself
+   * reads the precomputed set.
+   */
   allowedStatuses?: readonly string[]
   /** Redirect target for page routes (takes precedence over the JSON default). */
   redirect?: string
@@ -111,11 +152,12 @@ export const requirePlanMiddleware = (
   const required = new Set(requiredPlans)
   return async (c, next) => {
     const state = await getState(c)
-    const allowed = new Set(options?.allowedStatuses ?? DEFAULT_ENTITLED_STATUSES)
-    const statusOk =
-      state.subscription !== null && allowed.has(state.subscription.status)
-    const planOk = state.plan !== null && required.has(state.plan)
-    if (!statusOk || !planOk) {
+    // Gate on EVERY entitled subscription's plan (state.entitledPlans),
+    // not just the single "best" pick — a user paying for `pro` on an older
+    // subscription must not be denied because a newer sub on a different
+    // plan wins the pick (Alloy: GateFairness).
+    const planOk = state.entitledPlans.some((p) => required.has(p))
+    if (!planOk) {
       if (options?.onDenied) return options.onDenied(c, state)
       if (options?.redirect) return c.redirect(options.redirect)
       return c.json(

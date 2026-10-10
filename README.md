@@ -146,7 +146,8 @@ The Stripe client for verification comes from `c.var.stripe` when
 - A handler may `return c.json(...)` / `Response` (sent verbatim) or return
   nothing (`200 { received: true }`).
 - A handler that throws surfaces as a `500` via Hono's error handling, so
-  Stripe retries — and since dedupe records only after a successful handler,
+  Stripe retries — and since dedupe records only on a 2xx-equivalent
+  outcome (a throw **or a returned non-2xx `Response`** counts as failure),
   retries are processed normally.
 - `verifyStripeSignature(c, { secret })` remains available from
   `hono-stripe/webhook` as the bare primitive if you want a `switch` instead
@@ -237,11 +238,18 @@ app.get('/pro/data', billing.requirePlan(['pro', 'team']), (c) => c.text('ok'))
 | `BILLING_SCHEMA_SQLITE` / `BILLING_SCHEMA_PG` | DDL for `stripe_customers` + `stripe_subscriptions` (`hono-stripe/billing/schema`) |
 | `billingSyncHandlers(opts)` | The sync handlers alone, for custom composition |
 
-Link your app user to Stripe at checkout with `billing.checkoutParams(userId)`;
+Link your app user to Stripe at checkout with `billing.checkoutParams(userId)`
+(merge your own keys via the second argument — the linkage key always wins);
 userId resolution order is `client_reference_id` → session metadata →
 subscription metadata → customer metadata. Cloudflare Workers KV cannot be a
 correctness-complete mirror (no atomic check-and-write) — use the SQL store as
 source of truth and `syncFromStripe()` for reconciliation.
+
+`requirePlan` gates on `state.entitledPlans` — the plans matched by **every**
+entitled subscription, so a user paying for `pro` on an older subscription
+isn't denied because a newer sub wins the deterministic "best" pick. When the
+`user` resolver can't resolve a user (returns nullish or throws), entitlement
+APIs respond `401`. Use `BillingEnv` to type `c.var.billing`.
 
 ## Payment UI — `hono-stripe/ui`
 

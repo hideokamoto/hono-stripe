@@ -7,8 +7,10 @@
  * delivery as at-least-once and ignore repeats of the same `event.id`.
  *
  * A {@link StripeEventStore} records processed event ids. `stripeWebhook`
- * consults it before dispatching and records the id only after the handler
- * completes successfully, so a failed handler is retried normally.
+ * consults it before dispatching and records the id only when the handler
+ * produced a 2xx-equivalent acknowledgement — a handler that throws or
+ * returns a non-2xx `Response` leaves the event unrecorded, so Stripe's
+ * retry re-runs it normally.
  */
 
 /**

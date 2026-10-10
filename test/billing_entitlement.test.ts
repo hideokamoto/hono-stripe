@@ -1,11 +1,12 @@
 import { Hono } from 'hono'
-import { describe, expect, it } from 'vitest'
-import type { BillingSubscriptionRow } from '../src/billing/types'
+import { describe, expect, it, vi } from 'vitest'
+import type { BillingStore, BillingSubscriptionRow } from '../src/billing/types'
 import { memoryBillingStore } from '../src/billing/store/memory'
 import {
   getBillingState,
   matchPlan,
   pickBestSubscription,
+  type BillingEnv,
 } from '../src/billing/entitlement'
 import { stripeBilling } from '../src/billing'
 
@@ -169,5 +170,148 @@ describe('stripeBilling factory', () => {
     const res = await app.request('/pro')
     expect(res.status).toBe(402)
     expect(await res.text()).toBe('nope')
+  })
+
+  it('checkoutParams merges caller metadata without dropping the user link', () => {
+    const params = billing.checkoutParams('u1', {
+      metadata: { orderId: 'o1', user_id: 'spoofed' },
+      subscriptionMetadata: { tier: 'gold' },
+    })
+    // The linkage key always wins — a caller's own user_id cannot shadow it.
+    expect(params.metadata).toEqual({ orderId: 'o1', user_id: 'u1' })
+    expect(params.subscription_data.metadata).toEqual({ tier: 'gold', user_id: 'u1' })
+  })
+})
+
+describe('multi-subscription entitlement', () => {
+  it('entitledPlans covers every entitled sub, plan stays the best pick', async () => {
+    const store = memoryBillingStore()
+    await store.upsertSubscription(row({ id: 'sub_pro', priceIds: ['price_pro'], lastEventCreated: 5 }))
+    await store.upsertSubscription(row({ id: 'sub_basic', priceIds: ['price_basic'], lastEventCreated: 9 }))
+    const state = await getBillingState(store, 'u1', { pro: 'price_pro', basic: 'price_basic' })
+    expect(state.plan).toBe('basic') // best pick = newer event
+    expect(state.entitledPlans.sort()).toEqual(['basic', 'pro'])
+  })
+
+  it('entitledPlans excludes non-entitled statuses and honors allowedStatuses', async () => {
+    const store = memoryBillingStore()
+    await store.upsertSubscription(row({ id: 's1', priceIds: ['price_pro'], status: 'past_due' }))
+    expect(
+      (await getBillingState(store, 'u1', { pro: 'price_pro' })).entitledPlans,
+    ).toEqual([])
+    expect(
+      (
+        await getBillingState(store, 'u1', { pro: 'price_pro' }, {
+          allowedStatuses: ['past_due'],
+        })
+      ).entitledPlans,
+    ).toEqual(['pro'])
+  })
+
+  it('requirePlan passes when any entitled sub matches — not just the best pick', async () => {
+    const store = memoryBillingStore()
+    // Older pro sub + newer basic sub: the best pick is basic, but the user
+    // is still entitled to pro.
+    await store.upsertSubscription(row({ id: 'sub_pro', priceIds: ['price_pro'], lastEventCreated: 5 }))
+    await store.upsertSubscription(row({ id: 'sub_basic', priceIds: ['price_basic'], lastEventCreated: 9 }))
+    const b = stripeBilling({
+      store,
+      plans: { pro: 'price_pro', basic: 'price_basic' },
+      user: () => 'u1',
+    })
+    const app = new Hono()
+    app.get('/pro', b.requirePlan('pro'), (c) => c.text('ok'))
+    app.get('/basic', b.requirePlan('basic'), (c) => c.text('ok'))
+    app.get('/team', b.requirePlan('team'), (c) => c.text('ok'))
+    expect((await app.request('/pro')).status).toBe(200)
+    expect((await app.request('/basic')).status).toBe(200)
+    expect((await app.request('/team')).status).toBe(403)
+  })
+
+  it('requirePlan denies when the matching sub is not entitled', async () => {
+    const store = memoryBillingStore()
+    await store.upsertSubscription(row({ id: 's1', priceIds: ['price_pro'], status: 'canceled' }))
+    const b = stripeBilling({ store, plans: { pro: 'price_pro' }, user: () => 'u1' })
+    const app = new Hono()
+    app.get('/pro', b.requirePlan('pro'), (c) => c.text('ok'))
+    expect((await app.request('/pro')).status).toBe(403)
+  })
+})
+
+describe('billing middleware', () => {
+  const counting = (inner: BillingStore) => {
+    let reads = 0
+    const store: BillingStore = {
+      ...inner,
+      getSubscriptionsByUserId: async (u) => {
+        reads++
+        return inner.getSubscriptionsByUserId(u)
+      },
+      getCustomerByUserId: async (u) => {
+        reads++
+        return inner.getCustomerByUserId(u)
+      },
+    }
+    return { store, reads: () => reads }
+  }
+
+  it('requirePlan reuses c.var.billing populated by middleware', async () => {
+    const { store, reads } = counting(memoryBillingStore())
+    await store.upsertSubscription(row({ priceIds: ['price_pro'] }))
+    const b = stripeBilling({ store, plans: { pro: 'price_pro' }, user: () => 'u1' })
+    const app = new Hono()
+    app.use('/pro/*', b.middleware())
+    app.get('/pro/x', b.requirePlan('pro'), (c) => c.text('ok'))
+    expect((await app.request('/pro/x')).status).toBe(200)
+    // 1 getSubs + 1 getCustomer for the whole request — not 4.
+    expect(reads()).toBe(2)
+  })
+
+  it('custom allowedStatuses bypass the cached state and recompute', async () => {
+    const { store, reads } = counting(memoryBillingStore())
+    await store.upsertSubscription(row({ status: 'past_due', priceIds: ['price_pro'] }))
+    const b = stripeBilling({ store, plans: { pro: 'price_pro' }, user: () => 'u1' })
+    const app = new Hono()
+    // middleware() caches state under default statuses (past_due → not
+    // entitled); the gate below allows past_due, so it must recompute.
+    app.use('/pro/*', b.middleware())
+    app.get('/pro/x', b.requirePlan('pro', { allowedStatuses: ['past_due'] }), (c) => c.text('ok'))
+    expect((await app.request('/pro/x')).status).toBe(200)
+    expect(reads()).toBe(4)
+  })
+
+  it('BillingEnv types c.var.billing', async () => {
+    const store = memoryBillingStore()
+    await store.upsertSubscription(row({ priceIds: ['price_pro'] }))
+    const b = stripeBilling({ store, plans: { pro: 'price_pro' }, user: () => 'u1' })
+    const app = new Hono<BillingEnv>()
+    app.use('/pro/*', b.middleware())
+    app.get('/pro/x', (c) => c.json({ entitled: c.var.billing.entitled, plan: c.var.billing.plan }))
+    const res = await app.request('/pro/x')
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ entitled: true, plan: 'pro' })
+  })
+
+  it('unauthenticated requests (user resolver returns null) get 401', async () => {
+    const b = stripeBilling({ store: memoryBillingStore(), plans: { pro: 'price_pro' }, user: () => null })
+    const app = new Hono()
+    app.get('/pro', b.requirePlan('pro'), (c) => c.text('ok'))
+    expect((await app.request('/pro')).status).toBe(401)
+  })
+
+  it('a throwing user resolver warns and fails closed (401, not 500)', async () => {
+    const warn = vi.fn()
+    const b = stripeBilling({
+      store: memoryBillingStore(),
+      plans: { pro: 'price_pro' },
+      warn,
+      user: () => {
+        throw new Error('auth middleware not mounted')
+      },
+    })
+    const app = new Hono()
+    app.get('/pro', b.requirePlan('pro'), (c) => c.text('ok'))
+    expect((await app.request('/pro')).status).toBe(401)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('user resolver threw'))
   })
 })

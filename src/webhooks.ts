@@ -136,7 +136,11 @@ export interface StripeWebhookOptions
    *
    * When set, a second delivery of the same `event.id` short-circuits to
    * `200 { "received": true, "duplicate": true }` without invoking the
-   * handler. See `memoryEventStore` / `kvEventStore`.
+   * handler. The id is recorded only when the outcome is a 2xx-equivalent
+   * acknowledgement (no return value, or a returned 2xx `Response`) — a
+   * handler that throws or returns a non-2xx `Response` leaves the event
+   * unrecorded so Stripe's retry re-runs it. See `memoryEventStore` /
+   * `kvEventStore`.
    */
   dedupe?: StripeEventStore | ((c: Context) => StripeEventStore)
   /**
@@ -237,7 +241,15 @@ export const stripeWebhook = (options: StripeWebhookOptions): MiddlewareHandler 
       ? await handler(event, c)
       : await options.onUnhandled?.(event, c)
 
-    if (store) {
+    // Record the event id only when the outcome is what Stripe treats as
+    // acknowledged (2xx). A thrown error already skips this via propagation,
+    // but a handler that *returns* a non-2xx Response must also not be
+    // recorded — otherwise Stripe's retry arrives, hits the dedupe store,
+    // and is acknowledged as a duplicate without the handler re-running.
+    const acknowledged =
+      result === undefined ||
+      (result instanceof Response && result.status >= 200 && result.status < 300)
+    if (store && acknowledged) {
       await store.put(event.id, options.dedupeTtlSeconds ?? DEFAULT_DEDUPE_TTL_SECONDS)
     }
     return result instanceof Response ? result : c.json({ received: true })

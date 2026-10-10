@@ -66,12 +66,17 @@ await stripe.checkout.sessions.create({
   mode: 'subscription',
   line_items: [{ price: 'price_pro_monthly', quantity: 1 }],
   success_url: '...',
-  ...billing.checkoutParams(userId), // client_reference_id + metadata
+  ...billing.checkoutParams(userId, {
+    metadata: { orderId: 'o_123' },          // merged into session metadata
+    subscriptionMetadata: { tier: 'gold' },  // merged into subscription metadata
+  }),
 })
 ```
 
 `checkoutParams` populates every linkable field so the webhook can resolve
-the application user without an API round-trip.
+the application user without an API round-trip. Pass your own metadata via
+the second argument — the linkage key always wins, so it can't be dropped
+by accident.
 
 ### 4. Wire the webhook
 
@@ -93,22 +98,40 @@ type — `billing.handlers` runs first, your handler second. (Returning a
 ## Entitlement
 
 ```ts
+import type { BillingEnv } from 'hono-stripe/billing'
+
+const app = new Hono<{ Bindings: Bindings } & StripeEnv & BillingEnv>()
+
 app.use('/pro/*', billing.middleware())
 app.get('/pro/data', billing.requirePlan(['pro', 'team']), (c) => {
-  const { subscription, currentPeriodEnd } = c.get('billing')
+  const { subscription, currentPeriodEnd } = c.var.billing // typed BillingState
 })
 ```
 
-- `billing.getState(c)` — `{ entitled, plan, status, subscription, … }`
+- `billing.getState(c)` — `{ entitled, plan, entitledPlans, status,
+  subscription, … }`
 - `billing.requirePlan('pro' | ['pro', 'team'], opts)` — `403 { error:
   'plan_required' }` by default; `opts.onDenied`, `opts.redirect`, and
   `opts.allowedStatuses` (e.g. include `past_due` during a grace period)
   customize it.
 - `billing.getSubscriptions(c)` — all mirror rows for the user.
 
-`entitled` means the deterministic "best" subscription has status `active`
-or `trialing` (`allowedStatuses` overrides). Deterministic pick order:
-status rank → newest `lastEventCreated` → id.
+Gating uses `entitledPlans` — the plan matched by **every** entitled
+subscription (`status ∈ allowedStatuses`), not just the deterministic
+"best" pick. A user paying for `pro` on an older subscription while a
+newer `basic` subscription wins the pick still passes
+`requirePlan('pro')`. `plan` / `subscription` / `status` describe the best
+pick for display; deterministic pick order: status rank → newest
+`lastEventCreated` → id.
+
+`requirePlan` reuses the state `billing.middleware()` already populated on
+`c.var.billing` — the common pairing above costs one store read per
+request. (A `requirePlan` with custom `allowedStatuses` recomputes, since
+`entitledPlans` depends on the status set.)
+
+When the `user` resolver returns `null`/`undefined` — or throws because an
+upstream auth middleware isn't mounted — entitlement APIs respond `401`
+(fail-closed, with a `warn`), not `500`.
 
 ## userId resolution order
 
