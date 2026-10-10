@@ -264,3 +264,35 @@ describe('stripeCart — webhook handlers', () => {
     expect(await store.list('u1')).toEqual([{ priceId: 'p3', quantity: 1, addedAt: 1 }])
   })
 })
+
+describe('stripeCart — non-positive lines (model membership is quantity > 0)', () => {
+  it('a qty-0 line stored by a foreign writer is invisible to items and checkout', async () => {
+    const store = memoryCartStore()
+    const cart = setup('u1', store)
+    await store.put('u1', { priceId: 'p1', quantity: 0, addedAt: 1 })
+    await store.put('u1', { priceId: 'p2', quantity: 2, addedAt: 1 })
+    expect(await cart.items(c)).toEqual([
+      expect.objectContaining({ priceId: 'p2' }),
+    ])
+    const { params } = await cart.checkout(c)
+    expect(params.line_items).toEqual([{ price: 'p2', quantity: 2 }])
+  })
+
+  it('a cart whose only line is qty-0 is refused by checkout (still empty)', async () => {
+    const store = memoryCartStore()
+    const cart = setup('u1', store)
+    await store.put('u1', { priceId: 'p1', quantity: 0, addedAt: 1 })
+    await expect(cart.checkout(c)).rejects.toThrow(/empty cart/)
+  })
+
+  it('merge does not propagate a qty-0 phantom line', async () => {
+    const store = memoryCartStore()
+    await store.put('anon', { priceId: 'p1', quantity: 0, addedAt: 1 })
+    await store.put('anon', { priceId: 'p2', quantity: 1, addedAt: 1 })
+    const cart = setup('u1', store)
+    await cart.merge(c, 'anon')
+    expect(await cart.items(c)).toEqual([
+      expect.objectContaining({ priceId: 'p2' }),
+    ])
+  })
+})

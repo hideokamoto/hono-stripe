@@ -20,7 +20,10 @@ export interface FakeKVEntry {
 }
 
 export const fakeKV = (options: { pageSize?: number } = {}) => {
-  const pageSize = options.pageSize ?? 1000
+  // Server-side page cap — real KV caps at 1000 regardless of the requested
+  // limit, so a smaller pageSize here forces multi-page lists the way a
+  // constrained store would.
+  const pageCap = options.pageSize ?? 1000
   const entries = new Map<string, FakeKVEntry>()
   let nowMs = Date.now()
 
@@ -66,7 +69,7 @@ export const fakeKV = (options: { pageSize?: number } = {}) => {
     }> => {
       const keys = sortedLiveKeys(opts?.prefix ?? '')
       const start = opts?.cursor ? Number.parseInt(opts.cursor, 10) : 0
-      const limit = opts?.limit ?? pageSize
+      const limit = Math.min(opts?.limit ?? pageCap, pageCap)
       const page = keys.slice(start, start + limit)
       const complete = start + limit >= keys.length
       return {

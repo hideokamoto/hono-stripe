@@ -3,6 +3,10 @@ import type { CartItem, CartStore } from '../types'
 /**
  * Minimal KV surface a `kvCartStore` needs — structurally compatible with
  * Cloudflare's `KVNamespace` (a real binding is a superset of this).
+ *
+ * `cartId` and `priceId` must not contain ':' — it is the key-layout
+ * separator, and a hostile or malformed id could otherwise write inside
+ * another cart's prefix (the adapter validates this and throws).
  */
 export interface CartKVNamespace {
   get(key: string): Promise<string | null>
@@ -41,11 +45,27 @@ export interface KvCartStoreOptions {
   ttlSeconds?: number
 }
 
-const itemKey = (prefix: string, cartId: string, priceId: string) =>
-  `${prefix}cart:${cartId}:item:${priceId}`
+// ':' is the key-layout separator — a cartId/priceId containing it could
+// write (or enumerate) inside another cart's prefix. Reject rather than
+// escape: ids are server-side values and ':' in one is a bug or an attack.
+const checkId = (kind: string, id: string) => {
+  if (id.includes(':')) {
+    throw new Error(
+      `hono-stripe/ec: ${kind} must not contain ':' (the key-layout separator): ${JSON.stringify(id)}`,
+    )
+  }
+}
 
-const cartPrefix = (prefix: string, cartId: string) =>
-  `${prefix}cart:${cartId}:item:`
+const itemKey = (prefix: string, cartId: string, priceId: string) => {
+  checkId('cartId', cartId)
+  checkId('priceId', priceId)
+  return `${prefix}cart:${cartId}:item:${priceId}`
+}
+
+const cartPrefix = (prefix: string, cartId: string) => {
+  checkId('cartId', cartId)
+  return `${prefix}cart:${cartId}:item:`
+}
 
 const isCartItem = (v: unknown): v is CartItem =>
   typeof v === 'object' &&
@@ -75,6 +95,9 @@ export const kvCartStore = (
   kv: CartKVNamespace,
   options: KvCartStoreOptions = {},
 ): CartStore => {
+  if (options.ttlSeconds !== undefined && options.ttlSeconds < 60) {
+    throw new Error('hono-stripe/ec: ttlSeconds must be >= 60 (KV minimum expirationTtl)')
+  }
   const prefix = options.keyPrefix ?? ''
 
   const readKey = async (name: string, metadata: unknown): Promise<CartItem | null> => {

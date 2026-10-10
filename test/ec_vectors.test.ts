@@ -160,11 +160,14 @@ describe('spec-vector replay — cart_ops.qnt schedules', () => {
       // truth, served view, charged snapshots, and boundary flags.
       expect(qtyMap(store._truth)).toEqual(nonzero(vector.final.truth))
       expect(qtyMap(store._view)).toEqual(nonzero(vector.final.view))
-      expect(charged.map((s) => [...s].sort())).toEqual(
-        vector.final.charged
+      // charged is a Quint Set — compare as a set (sort inner and outer;
+      // ITF ordering is not commit order).
+      const normSets = (sets: string[][]) =>
+        sets
           .filter((s) => s.length > 0)
-          .map((s) => [...s].sort()),
-      )
+          .map((s) => [...s].sort())
+          .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+      expect(normSets(charged)).toEqual(normSets(vector.final.charged))
       expect([...lostPostSnapWrites].sort()).toEqual(
         [...vector.final.lostPostSnapWrites].sort(),
       )

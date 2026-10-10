@@ -61,6 +61,7 @@ describe('stripeCart — onDrained (fulfilledExactlyCharged)', () => {
     expect(onDrained).toHaveBeenCalledTimes(1)
     expect(onDrained).toHaveBeenCalledWith({
       c: expect.anything(),
+      sessionId: 'cs_1',
       cartId: 'u1',
       items: [
         { price: 'p1', quantity: 2 },

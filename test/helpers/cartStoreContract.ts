@@ -69,12 +69,11 @@ export const describeCartStoreContract = (
 
     it('put does not read the existing line — no read-modify-write', async () => {
       const store = await makeStore()
-      // A store that secretly RMWs would merge or fail here; absolute put
-      // must simply overwrite whatever is there.
-      await store.put('u1', line('p1', 1, 10))
-      await store.put('u1', line('p1', 0, 20)) // quantity 0 is a legal put
-      const items = await store.list('u1')
-      expect(items).toEqual([line('p1', 0, 20)])
+      // A store that secretly RMWs (e.g. a delta/merge store) would sum to
+      // 7; absolute put must overwrite with exactly what was written.
+      await store.put('u1', line('p1', 5, 10))
+      await store.put('u1', line('p1', 2, 20))
+      expect(await store.list('u1')).toEqual([line('p1', 2, 20)])
     })
 
     it('list enumerates every line — no truncation', async () => {

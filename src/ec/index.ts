@@ -27,19 +27,22 @@ export interface StripeCartOptions {
    */
   user: (c: Context) => string | Promise<string>
   /**
-   * Fulfillment handoff — invoked once per drained payment session, after
-   * the drain completes, with the session's line items.
+   * Fulfillment handoff — invoked after each drained payment session's
+   * drain completes, with the session's line items.
    *
    * Contract (spec `fulfilledExactlyCharged`): `items` is the charged
    * snapshot itself — the session's `line_items` — never a re-enumeration
    * of the cart. A post-snapshot add survives in the cart but is not in
    * `items` (it was not charged).
    *
-   * Throwing propagates as a 500 so Stripe retries the delivery — a
-   * fulfillment failure must never be acknowledged.
+   * Delivery is at-least-once: throwing propagates as a 500 so Stripe
+   * retries the delivery — a fulfillment failure must never be
+   * acknowledged — and a lost 200 can also produce a redelivery. Make the
+   * callback idempotent, keyed on `sessionId`.
    */
   onDrained?: (args: {
     c: Context
+    sessionId: string
     cartId: string
     items: CartCheckoutLineItem[]
   }) => void | Promise<void>
@@ -138,12 +141,17 @@ export const stripeCart = (options: StripeCartOptions): StripeCart => {
       } while (startingAfter)
       // fulfilledExactlyCharged: hand fulfillment the session's line items
       // — the charged snapshot — never a re-enumerated cart list.
-      await options.onDrained?.({ c, cartId, items: drained })
+      await options.onDrained?.({ c, sessionId: session.id, cartId, items: drained })
     },
   }
 
+  // The spec model defines membership as quantity > 0 — a corrupt or
+  // foreign-written non-positive line is not a cart item and must not reach
+  // checkout (Stripe rejects line_items with quantity < 1).
+  const live = (items: CartItem[]) => items.filter((i) => i.quantity > 0)
+
   return {
-    items: async (c) => storeOf(c).list(await cartIdOf(c)),
+    items: async (c) => live(await storeOf(c).list(await cartIdOf(c))),
 
     set: async (c, priceId, quantity) => {
       const store = storeOf(c)
@@ -169,7 +177,10 @@ export const stripeCart = (options: StripeCartOptions): StripeCart => {
       const store = storeOf(c)
       const cartId = await cartIdOf(c)
       if (fromCartId === cartId) return { merged: 0 }
-      const [from, to] = await Promise.all([store.list(fromCartId), store.list(cartId)])
+      const [from, to] = await Promise.all([
+        store.list(fromCartId).then(live),
+        store.list(cartId).then(live),
+      ])
       const targetByPrice = new Map(to.map((i) => [i.priceId, i]))
       let merged = 0
       for (const line of from) {
@@ -193,7 +204,7 @@ export const stripeCart = (options: StripeCartOptions): StripeCart => {
           'hono-stripe/ec: no cart owner id resolved — refusing checkout (the session could charge but never drain).',
         )
       }
-      const lines = await store.list(cartId)
+      const lines = live(await store.list(cartId))
       if (lines.length === 0) {
         throw new Error('hono-stripe/ec: refusing checkout on an empty cart')
       }

@@ -77,4 +77,23 @@ describe('kvCartStore — KV-specific behaviors', () => {
       { priceId: 'p1', quantity: 1, addedAt: 0 },
     ])
   })
+
+  it('rejects ids containing ":" — the key-layout separator', async () => {
+    const kv = fakeKV()
+    const store = kvCartStore(kv)
+    // Without the guard this would write inside another cart's prefix:
+    // cart "victim:item:x" → cart:victim:item:x:item:p9 ⊂ cart:victim:item:
+    await expect(store.list('victim:item:x')).rejects.toThrow(/':'/)
+    await expect(
+      store.put('u1', { priceId: 'p:1', quantity: 1, addedAt: 0 }),
+    ).rejects.toThrow(/':'/)
+    await expect(store.delete('u1', 'p:1')).rejects.toThrow(/':'/)
+    // keyPrefix is operator-controlled, not user input — ':' is legal there.
+    expect(() => kvCartStore(kv, { keyPrefix: 'ns:' })).not.toThrow()
+  })
+
+  it('rejects ttlSeconds below the KV minimum of 60', () => {
+    expect(() => kvCartStore(fakeKV(), { ttlSeconds: 59 })).toThrow(/60/)
+    expect(() => kvCartStore(fakeKV(), { ttlSeconds: 60 })).not.toThrow()
+  })
 })
