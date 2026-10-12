@@ -1,0 +1,48 @@
+# Docs site workflow.
+#
+# Builds the Starlight site in docs/ (TypeDoc API pages are generated from src/
+# during the build) and deploys it as a Workers Static Assets site.
+#
+# Requires two secrets on the repository:
+#   CLOUDFLARE_API_TOKEN    — token with Workers Scripts Edit on the account
+#   CLOUDFLARE_ACCOUNT_ID   — the account to deploy `hono-stripe-docs` into
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**', 'src/**', 'pnpm-lock.yaml', '.github/workflows/docs.yml']
+  pull_request:
+    paths: ['docs/**', 'src/**']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C docs build
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C docs build
+      - run: pnpm -C docs exec wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

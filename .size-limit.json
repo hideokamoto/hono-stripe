@@ -6,9 +6,21 @@
     "brotli": true
   },
   {
-    "name": "CJS (dist/index.cjs)",
-    "path": "dist/index.cjs",
+    "name": "ESM (dist/webhooks.js)",
+    "path": "dist/webhooks.js",
     "limit": "2 kB",
+    "brotli": true
+  },
+  {
+    "name": "ESM (dist/testing.js)",
+    "path": "dist/testing.js",
+    "limit": "1 kB",
+    "brotli": true
+  },
+  {
+    "name": "ESM (dist/ui.js)",
+    "path": "dist/ui.js",
+    "limit": "1 kB",
     "brotli": true
   }
 ]

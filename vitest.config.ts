@@ -6,6 +6,6 @@ export default defineConfig({
     // TODO(HID-267): add a workerd project via @cloudflare/vitest-pool-workers
     // to verify createFetchHttpClient is applied on the edge runtime.
     environment: 'node',
-    include: ['test/**/*.test.ts'],
+    include: ['test/**/*.test.{ts,tsx}'],
   },
 })
