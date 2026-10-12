@@ -81,8 +81,7 @@
     "url": "https://github.com/hideokamoto/hono-stripe/issues"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "peerDependencies": {
     "hono": ">=4",
