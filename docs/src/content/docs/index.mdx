@@ -27,7 +27,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components'
   <Card title="Webhooks" icon="approve-check">
     `stripeWebhook()` verifies the signature (`constructEventAsync`,
     edge-safe), dispatches to **typed per-event handlers**, and dedupes Stripe
-    retries via KV, memory, or your own store.
+    retries via an atomic store you provide (or in-memory for dev).
   </Card>
   <Card title="Testing" icon="seti:config">
     `createWebhookRequest()` produces **real** HMAC signatures with WebCrypto —

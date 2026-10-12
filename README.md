@@ -7,7 +7,7 @@ One install covers the whole server-side Stripe integration:
 | Module | What you get |
 | -- | -- |
 | `hono-stripe` | Stripe client middleware (`c.var.stripe`), Stripe→HTTP error mapping for `app.onError` |
-| `hono-stripe/webhook` | `stripeWebhook` — verify + **typed per-event routing** + delivery dedupe (`KV`, in-memory, or your own store) |
+| `hono-stripe/webhook` | `stripeWebhook` — verify + **typed per-event routing** + delivery dedupe (in-memory, or your own atomic store) |
 | `hono-stripe/testing` | Real-signature webhook fixtures for tests and local dev — no `stripe listen` required |
 | `hono-stripe/ui` | hono/jsx (HonoX) components that render a working Payment Element form — no React |
 
@@ -35,12 +35,12 @@ import {
   stripeErrorHandler,
   type StripeEnv,
 } from 'hono-stripe'
-import { stripeWebhook, kvEventStore } from 'hono-stripe/webhook'
+import { stripeWebhook } from 'hono-stripe/webhook'
 
 type Bindings = {
   STRIPE_SECRET_KEY: string
   STRIPE_WEBHOOK_SECRET: string
-  STRIPE_EVENTS: KVNamespace
+  DB: D1Database // backs the dedupe store — see "Deduplication stores" in the webhooks guide
 }
 
 const app = new Hono<{ Bindings: Bindings } & StripeEnv>()
@@ -65,7 +65,8 @@ app.post(
   '/api/webhook',
   stripeWebhook({
     // c.env only exists at request time — resolve the store lazily per request.
-    dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS),
+    // Your atomic StripeEventStore (D1 example in the webhooks guide).
+    dedupe: (c) => d1EventStore(c.env.DB),
     on: {
       'payment_intent.succeeded': (event) => {
         console.log('paid', event.data.object.id) // Stripe.PaymentIntent
@@ -118,15 +119,16 @@ serve(app)
    acknowledge repeat deliveries without re-running the handler.
 
 ```ts
-import { stripeWebhook, memoryEventStore, kvEventStore } from 'hono-stripe/webhook'
+import { stripeWebhook, memoryEventStore } from 'hono-stripe/webhook'
 
 app.post('/webhook', stripeWebhook({
   // Secret resolution order: `secret` (string or (c) => string) →
   // env binding / process.env[webhookSecretVar] (default STRIPE_WEBHOOK_SECRET)
   secret: (c) => c.env.STRIPE_WEBHOOK_SECRET,
 
-  // Or a plain store: memoryEventStore() for dev / single-isolate Node.
-  dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS),
+  // memoryEventStore() for dev / single-isolate Node; production needs an
+  // atomic store (see "Deduplication stores").
+  dedupe: memoryEventStore(),
 
   on: {
     'customer.subscription.deleted': async (event, c) => {
@@ -158,13 +160,18 @@ Bring your own backend (D1, Upstash, DB) by implementing two methods:
 
 ```ts
 interface StripeEventStore {
-  has(eventId: string): Promise<boolean>
-  put(eventId: string, ttlSeconds: number): Promise<void>
+  claim(eventId: string, ttlSeconds: number): Promise<boolean> // atomic
+  release(eventId: string): Promise<void>
 }
 ```
 
-`memoryEventStore()` (in-process) and `kvEventStore(namespace)` (Workers KV,
-auto-expiring keys) are provided. Default retention is 3 days.
+`claim` must be atomic (conditional insert, Durable Object, `SET NX`, …), so
+concurrent deliveries of one event run the handler once; the claim is released
+if the handler throws or returns non-2xx. `memoryEventStore()` is provided for
+dev and single-process use. **Workers KV is eventually consistent and cannot
+provide an atomic claim — do not use it for dedupe.** See the
+[webhooks guide](docs/src/content/docs/guides/webhooks.md) for D1 /
+DynamoDB examples. Default retention is 3 days.
 
 ## Testing — `hono-stripe/testing`
 

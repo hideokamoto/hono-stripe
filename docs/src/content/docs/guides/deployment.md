@@ -10,16 +10,18 @@ description: Runtime notes for Cloudflare Workers, Node, and production hardenin
   Node's HTTP stack.
 - Webhook verification uses `constructEventAsync` (WebCrypto) — the sync
   `constructEvent` does not work on Workers.
-- For production webhook dedupe, bind a KV namespace and use
-  `dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS)`.
+- For production webhook dedupe, use a store with an atomic claim (D1, a
+  Durable Object, …) — not Workers KV, which is eventually consistent. See the
+  [webhooks guide](/guides/webhooks/#deduplication-stores).
 
 ```toml
 # wrangler.toml
 compatibility_flags = ["nodejs_compat"]
 
-[[kv_namespaces]]
-binding = "STRIPE_EVENTS"
-id = "..."
+[[d1_databases]]
+binding = "DB"
+database_name = "stripe-events"
+database_id = "..."
 ```
 
 ## Node

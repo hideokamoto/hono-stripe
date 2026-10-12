@@ -59,6 +59,5 @@ pnpm deploy
 - `compatibility_flags = ["nodejs_compat"]` is enabled for the Stripe SDK. On
   Workers, `hono-stripe` applies `Stripe.createFetchHttpClient()` automatically.
 - The example dedupes webhook deliveries with `memoryEventStore` (per-isolate,
-  dev-grade). For production back it with Workers KV:
-  `dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS)` with a
-  `[[kv_namespaces]]` binding.
+  dev-grade). For production use a store with an atomic `claim` (D1, a Durable
+  Object, …); Workers KV is eventually consistent and is not suitable.

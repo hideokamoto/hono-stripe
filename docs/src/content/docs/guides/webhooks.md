@@ -44,29 +44,43 @@ app.post('/webhook', stripeWebhook({
 - Return a `Response` (`c.json(...)`, `c.text(...)`, …) to control the reply,
   or nothing for the default `200 { received: true }`.
 - Throwing surfaces as a `500` via Hono error handling → Stripe retries. Since
-  dedupe records only **after** a successful handler, retried deliveries are
-  processed normally.
+  the dedupe claim is released when the handler throws (or returns a non-2xx
+  `Response`), retried deliveries are processed normally.
 
 ## Deduplication stores
 
 ```ts
 interface StripeEventStore {
-  has(eventId: string): Promise<boolean>
-  put(eventId: string, ttlSeconds: number): Promise<void>
+  claim(eventId: string, ttlSeconds: number): Promise<boolean> // atomic
+  release(eventId: string): Promise<void>
 }
 ```
+
+`claim` runs **before** the handler and must be atomic: of concurrent
+deliveries of the same event, exactly one gets `true`. The others are
+acknowledged as `duplicate` without running the handler. If the handler throws
+or returns a non-2xx response, the router calls `release` so Stripe's retry can
+claim it again.
+
+:::caution
+Workers KV is eventually consistent and has no conditional write, so it cannot
+implement `claim` — two locations can both see "not claimed". Use a store with
+atomic writes (D1, a Durable Object, Postgres, DynamoDB conditional writes,
+Redis `SET NX`). If a process crashes mid-handler the claim stays until
+`dedupeTtlSeconds` expires; keep handlers idempotent as a second line of
+defense.
+:::
 
 | Store | Use for |
 | -- | -- |
 | `memoryEventStore()` | Dev, tests, single-process Node |
-| `kvEventStore(namespace)` | Cloudflare Workers KV (auto-expiring keys) |
-| Your own | D1, DynamoDB, Upstash, Postgres… implement the two methods |
+| Your own | D1, Durable Objects, DynamoDB, Postgres, Redis… implement the two methods atomically |
 
 On Workers, env bindings only exist at request time — pass a factory:
 
 ```ts
 stripeWebhook({
-  dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS),
+  dedupe: (c) => d1EventStore(c.env.DB), // defined below
   // ...
 })
 ```
@@ -77,49 +91,68 @@ window.
 ### Custom store examples
 
 The interface is deliberately minimal — two async methods — so any storage
-works.
+with an atomic conditional write works.
 
-**DynamoDB** (TTL attribute handles expiry):
+**DynamoDB** (conditional put is atomic; TTL attribute handles cleanup):
 
 ```ts
-import { DynamoDBClient, GetItemCommand, PutItemCommand } from '@aws-sdk/client-dynamodb'
+import {
+  ConditionalCheckFailedException,
+  DeleteItemCommand,
+  DynamoDBClient,
+  PutItemCommand,
+} from '@aws-sdk/client-dynamodb'
 import type { StripeEventStore } from 'hono-stripe/webhook'
 
 const dynamoEventStore = (client: DynamoDBClient, table: string): StripeEventStore => ({
-  has: async (eventId) => {
-    const res = await client.send(new GetItemCommand({
+  claim: async (eventId, ttlSeconds) => {
+    const now = Math.floor(Date.now() / 1000)
+    try {
+      await client.send(new PutItemCommand({
+        TableName: table,
+        Item: {
+          id: { S: `stripe:evt:${eventId}` },
+          ttl: { N: String(now + ttlSeconds) },
+        },
+        // Succeeds only if absent (or an expired item TTL has not swept yet).
+        ConditionExpression: 'attribute_not_exists(id) OR #ttl < :now',
+        ExpressionAttributeNames: { '#ttl': 'ttl' },
+        ExpressionAttributeValues: { ':now': { N: String(now) } },
+      }))
+      return true
+    } catch (err) {
+      if (err instanceof ConditionalCheckFailedException) return false
+      throw err
+    }
+  },
+  release: async (eventId) => {
+    await client.send(new DeleteItemCommand({
       TableName: table,
       Key: { id: { S: `stripe:evt:${eventId}` } },
-    }))
-    return res.Item !== undefined
-  },
-  put: async (eventId, ttlSeconds) => {
-    await client.send(new PutItemCommand({
-      TableName: table,
-      Item: {
-        id: { S: `stripe:evt:${eventId}` },
-        ttl: { N: String(Math.floor(Date.now() / 1000) + ttlSeconds) },
-      },
     }))
   },
 })
 ```
 
-**D1** (Cloudflare's SQLite — expiry checked at read time):
+**D1** (Cloudflare's SQLite — a single-statement upsert is atomic):
 
 ```ts
 const d1EventStore = (db: D1Database): StripeEventStore => ({
   // CREATE TABLE stripe_events (id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL)
-  has: async (eventId) =>
-    (await db
-      .prepare('SELECT 1 FROM stripe_events WHERE id = ? AND expires_at > unixepoch()')
-      .bind(`stripe:evt:${eventId}`)
-      .first()) !== null,
-  put: async (eventId, ttlSeconds) => {
-    await db
-      .prepare('INSERT OR IGNORE INTO stripe_events (id, expires_at) VALUES (?, unixepoch() + ?)')
+  claim: async (eventId, ttlSeconds) => {
+    // Inserts a new row, or takes over an expired one; a live row is untouched.
+    const res = await db
+      .prepare(
+        `INSERT INTO stripe_events (id, expires_at) VALUES (?, unixepoch() + ?)
+         ON CONFLICT(id) DO UPDATE SET expires_at = excluded.expires_at
+         WHERE stripe_events.expires_at <= unixepoch()`,
+      )
       .bind(`stripe:evt:${eventId}`, ttlSeconds)
       .run()
+    return res.meta.changes > 0
+  },
+  release: async (eventId) => {
+    await db.prepare('DELETE FROM stripe_events WHERE id = ?').bind(`stripe:evt:${eventId}`).run()
   },
 })
 

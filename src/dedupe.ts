@@ -6,24 +6,37 @@
  * handler with side effects (billing state, emails, provisioning) should treat
  * delivery as at-least-once and ignore repeats of the same `event.id`.
  *
- * A {@link StripeEventStore} records processed event ids. `stripeWebhook`
- * consults it before dispatching and records the id only after the handler
- * completes successfully, so a failed handler is retried normally.
+ * A {@link StripeEventStore} atomically claims an event id before the handler
+ * runs, so concurrent deliveries of the same event cannot both execute it. The
+ * claim is released if the handler throws or returns a non-2xx response, so a
+ * failed delivery is retried normally.
  */
 
 /**
  * Storage backend for processed Stripe event ids.
  *
- * `has`/`put` errors are NOT swallowed by the router — they propagate as a 500
- * so Stripe retries the delivery (fail-closed). A store that silently drops
- * errors would double-process events, which is the worse failure mode for
- * payments.
+ * `claim` MUST be atomic: of any number of concurrent callers claiming the same
+ * id, exactly one gets `true` (a conditional insert, `SET NX`, a Durable
+ * Object, a unique-key `INSERT`, …). Eventually consistent stores such as
+ * Workers KV cannot provide this and are NOT suitable.
+ *
+ * `claim`/`release` errors are NOT swallowed by the router — a `claim` error
+ * propagates as a 500 so Stripe retries the delivery (fail-closed). A store
+ * that silently drops errors would double-process events, which is the worse
+ * failure mode for payments.
  */
 export interface StripeEventStore {
-  /** Whether `eventId` has already been processed. */
-  has(eventId: string): Promise<boolean>
-  /** Record `eventId` as processed. `ttlSeconds` is a hint for stores that support expiry. */
-  put(eventId: string, ttlSeconds: number): Promise<void>
+  /**
+   * Atomically claim `eventId`. Resolves `true` if this caller acquired it,
+   * `false` if it is already claimed (in flight or processed).
+   * `ttlSeconds` is a hint for stores that support expiry.
+   */
+  claim(eventId: string, ttlSeconds: number): Promise<boolean>
+  /**
+   * Release a claim after the handler failed, so Stripe's retry can run it
+   * again.
+   */
+  release(eventId: string): Promise<void>
 }
 
 export interface MemoryEventStoreOptions {
@@ -34,69 +47,29 @@ export interface MemoryEventStoreOptions {
 /**
  * In-memory event store — for development and single-isolate workloads.
  *
- * Not suitable for production on Workers (no cross-isolate durability): use
- * {@link kvEventStore} or your own database-backed {@link StripeEventStore}.
+ * Atomic within one isolate/process only (claim is synchronous). Not suitable
+ * for production on Workers (no cross-isolate coordination): implement
+ * {@link StripeEventStore} on a store with atomic conditional writes — a
+ * Durable Object, D1, or another database.
  */
 export const memoryEventStore = (options: MemoryEventStoreOptions = {}): StripeEventStore => {
   const maxEntries = options.maxEntries ?? 1000
   // Map value = expiry epoch ms; insertion order lets us evict the oldest first.
   const seen = new Map<string, number>()
   return {
-    has: async (eventId) => {
+    claim: async (eventId, ttlSeconds) => {
       const expiry = seen.get(eventId)
-      if (expiry === undefined) return false
-      if (expiry <= Date.now()) {
-        seen.delete(eventId)
-        return false
-      }
-      return true
-    },
-    put: async (eventId, ttlSeconds) => {
+      if (expiry !== undefined && expiry > Date.now()) return false
       seen.delete(eventId)
       seen.set(eventId, Date.now() + ttlSeconds * 1000)
       if (seen.size > maxEntries) {
         const oldest = seen.keys().next().value
         if (oldest !== undefined) seen.delete(oldest)
       }
+      return true
     },
-  }
-}
-
-/**
- * Minimal shape of a Cloudflare Workers KV namespace, declared structurally so
- * this module does not depend on `@cloudflare/workers-types`.
- */
-export interface KVNamespaceLike {
-  get(key: string): Promise<unknown>
-  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>
-}
-
-export interface KVEventStoreOptions {
-  /** Key prefix inside the namespace. Default: `stripe:evt:`. */
-  prefix?: string
-}
-
-/**
- * Cloudflare Workers KV-backed event store. KV's per-key `expirationTtl` handles
- * cleanup automatically.
- *
- * @example
- * ```ts
- * stripeWebhook({
- *   dedupe: kvEventStore(c.env.STRIPE_EVENTS), // KVNamespace binding
- *   on: { ... },
- * })
- * ```
- */
-export const kvEventStore = (
-  namespace: KVNamespaceLike,
-  options: KVEventStoreOptions = {},
-): StripeEventStore => {
-  const prefix = options.prefix ?? 'stripe:evt:'
-  return {
-    has: async (eventId) => (await namespace.get(`${prefix}${eventId}`)) !== null,
-    put: async (eventId, ttlSeconds) => {
-      await namespace.put(`${prefix}${eventId}`, '1', { expirationTtl: ttlSeconds })
+    release: async (eventId) => {
+      seen.delete(eventId)
     },
   }
 }

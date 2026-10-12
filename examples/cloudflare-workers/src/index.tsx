@@ -145,8 +145,8 @@ app.post('/api/checkout-session', async (c) => {
 // ---------------------------------------------------------------------------
 // Webhook — hono-stripe/webhook: signature verification, typed per-event
 // dispatch (event.data.object is narrowed by event name), and delivery dedupe.
-// memoryEventStore is per-isolate, fine for dev — in production back it with
-// Workers KV: dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS)
+// memoryEventStore is per-isolate, fine for dev — in production use a store
+// with an atomic claim (D1, Durable Object, ...), not eventually consistent KV.
 // ---------------------------------------------------------------------------
 
 const processedEvents = memoryEventStore()

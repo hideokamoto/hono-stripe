@@ -7,8 +7,8 @@ import type { StripeMiddlewareOptions } from './types'
 import type { VerifyStripeSignatureOptions } from './webhook'
 import { constructVerifiedEvent, verifyStripeSignature } from './webhook'
 
-export type { KVNamespaceLike, StripeEventStore } from './dedupe'
-export { kvEventStore, memoryEventStore } from './dedupe'
+export type { StripeEventStore } from './dedupe'
+export { memoryEventStore } from './dedupe'
 export type { VerifyStripeSignatureOptions }
 export { verifyStripeSignature }
 
@@ -98,16 +98,18 @@ export interface StripeWebhookOptions
   /**
    * Store for processed event ids — or a function returning one per request.
    * The function form exists because Cloudflare Workers env bindings (KV
-   * namespaces) only exist at request time, not at route registration:
-   * `dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS)`.
+   * bindings such as D1 or Durable Objects) only exist at request time, not at
+   * route registration: `dedupe: (c) => d1EventStore(c.env.DB)`.
    *
-   * When set, a second delivery of the same `event.id` short-circuits to
+   * When set, the `event.id` is atomically claimed before the handler runs; a
+   * delivery that loses the claim short-circuits to
    * `200 { "received": true, "duplicate": true }` without invoking the
-   * handler. See `memoryEventStore` / `kvEventStore`.
+   * handler. The claim is released if the handler throws or responds non-2xx.
+   * The store must offer an atomic claim — see `StripeEventStore`.
    */
   dedupe?: StripeEventStore | ((c: Context) => StripeEventStore)
   /**
-   * Retention for recorded event ids, in seconds. Default: 259200 (3 days —
+   * Retention for claimed event ids, in seconds. Default: 259200 (3 days —
    * Stripe's maximum retry window).
    */
   dedupeTtlSeconds?: number
@@ -153,8 +155,8 @@ const resolveStripeClient = (c: Context, options: StripeWebhookOptions): Stripe 
  * - Handlers keyed by event type get a narrowed `event.data.object` (the
  *   stripe SDK discriminates `Stripe.Event` by `type`). A handler may return a
  *   `Response` (used verbatim) or nothing (`200 { "received": true }`).
- * - With `dedupe` set, repeat deliveries of the same `event.id` are
- *   acknowledged without re-invoking the handler.
+ * - With `dedupe` set, repeat and concurrent deliveries of the same
+ *   `event.id` are acknowledged without re-invoking the handler.
  * - A handler that throws produces a 500 (via Hono's error handling), which
  *   correctly makes Stripe retry the delivery.
  *
@@ -163,7 +165,7 @@ const resolveStripeClient = (c: Context, options: StripeWebhookOptions): Stripe 
  * app.post(
  *   '/webhook',
  *   stripeWebhook({
- *     dedupe: (c) => kvEventStore(c.env.STRIPE_EVENTS), // Workers KV binding
+ *     dedupe: (c) => d1EventStore(c.env.DB), // your atomic StripeEventStore
  *     on: {
  *       'payment_intent.succeeded': (event) => {
  *         console.log('paid', event.data.object.id)
@@ -187,19 +189,31 @@ export const stripeWebhook = (options: StripeWebhookOptions): MiddlewareHandler 
     })
 
     const store = typeof options.dedupe === 'function' ? options.dedupe(c) : options.dedupe
-    if (store && (await store.has(event.id))) {
+    const ttl = options.dedupeTtlSeconds ?? DEFAULT_DEDUPE_TTL_SECONDS
+    if (store && !(await store.claim(event.id, ttl))) {
       return c.json({ received: true, duplicate: true })
     }
 
-    // The handler map is typed per event literal; at the dispatch site the
-    // event is only known as Stripe.Event, so the narrowed handler signature
-    // cannot be proven — but `on` keys are exactly `event.type` values.
-    const handler = options.on[event.type] as StripeWebhookHandler | undefined
-    const result = handler ? await handler(event, c) : await options.onUnhandled?.(event, c)
-
-    if (store) {
-      await store.put(event.id, options.dedupeTtlSeconds ?? DEFAULT_DEDUPE_TTL_SECONDS)
+    // Release the claim on any failure so Stripe's retry can run the handler
+    // again. A failing release must not mask the original error.
+    const releaseQuietly = async () => {
+      if (store) await store.release(event.id).catch(() => {})
     }
+
+    let result: void | Response
+    try {
+      // The handler map is typed per event literal; at the dispatch site the
+      // event is only known as Stripe.Event, so the narrowed handler signature
+      // cannot be proven — but `on` keys are exactly `event.type` values.
+      const handler = options.on[event.type] as StripeWebhookHandler | undefined
+      result = handler ? await handler(event, c) : await options.onUnhandled?.(event, c)
+    } catch (err) {
+      await releaseQuietly()
+      throw err
+    }
+
+    // A non-2xx response makes Stripe retry, so the event must stay re-runnable.
+    if (result instanceof Response && !result.ok) await releaseQuietly()
     return result instanceof Response ? result : c.json({ received: true })
   }
 }
