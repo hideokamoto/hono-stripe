@@ -28,7 +28,7 @@ describe('StripePaymentForm', () => {
       <StripePaymentForm endpoint="/api/payment-intent" publishableKey="pk_test_1" />,
     )
     expect(html).toContain('<stripe-payment-element')
-    expect(html).toContain('id="hono-stripe-payment"')
+    expect(html).toMatch(/id="hono-stripe-payment-[0-9a-f-]{36}"/)
     expect(html).toContain('publishable-key="pk_test_1"')
     expect(html).toContain(STRIPE_ELEMENTS_CDN_URL)
     expect(html).toContain('fetch("/api/payment-intent"')
@@ -44,6 +44,33 @@ describe('StripePaymentForm', () => {
     const html = await render(<StripePaymentForm clientSecret="pi_1_secret_abc" />)
     expect(html).toContain('intent-client-secret="pi_1_secret_abc"')
     expect(html).not.toContain('fetch(')
+  })
+
+  it('gives each form a unique id and targets it in its bootstrap', async () => {
+    const html = await render(
+      <>
+        <StripePaymentForm endpoint="/a" />
+        <StripePaymentForm endpoint="/b" />
+      </>,
+    )
+    const ids = [...html.matchAll(/<stripe-payment-element id="([^"]+)"/g)].map((m) => m[1])
+    expect(ids).toHaveLength(2)
+    expect(ids[0]).not.toBe(ids[1])
+    for (const id of ids) expect(html).toContain(`getElementById("${id}")`)
+  })
+
+  it('escapes < in inlined values so </script> cannot close the script', async () => {
+    const html = await render(
+      <StripePaymentForm
+        endpoint="/x</script><script>alert(1)</script>"
+        id="a</script>b"
+        publishableKey="pk</script>"
+      />,
+    )
+    const script = html.slice(html.indexOf('const res = await fetch'))
+    expect(script.slice(0, script.indexOf('</script>'))).toContain('el.intentClientSecret')
+    expect(html).not.toContain('<script>alert(1)')
+    expect(html).toContain('\\u003c/script>')
   })
 
   it('throws when neither endpoint nor clientSecret is provided', async () => {

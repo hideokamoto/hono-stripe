@@ -65,7 +65,7 @@ Uses `checkout-session-client-secret` — pair with
 | `clientSecret` | `string` | SSR mode — rendered as an element attribute |
 | `publishableKey` | `string` | `pk_...`; in endpoint mode it's a fallback for the response |
 | `intent` | `'payment' \| 'checkout'` | Default `'payment'` |
-| `id` | `string` | Default `hono-stripe-payment` |
+| `id` | `string` | Default: a unique generated id (safe for multiple forms per page) |
 | `class` | `string` | Class on `<stripe-payment-element>` |
 | `src` | `string` | Override the elements CDN module URL (self-hosting) |
 

@@ -5,6 +5,29 @@ import { getDeclineMessage, isSoftDecline, type Locale } from 'stripe-decline-co
 
 const { errors } = Stripe
 
+/**
+ * `instanceof` against SDK error classes that may be missing on some supported
+ * stripe versions (peer range is >=17). An undefined class is skipped instead
+ * of throwing a TypeError.
+ */
+const isAnyOf = (err: unknown, names: string[]): boolean =>
+  names.some((name) => {
+    const ctor = (errors as unknown as Record<string, unknown>)[name]
+    return typeof ctor === 'function' && err instanceof ctor
+  })
+
+/**
+ * Decline codes that must not be explained to the customer — revealing that a
+ * card is flagged lets fraudsters probe stolen cards. They get the same generic
+ * response as `generic_decline`.
+ */
+const SENSITIVE_DECLINE_CODES = new Set([
+  'fraudulent',
+  'lost_card',
+  'stolen_card',
+  'merchant_blacklist',
+])
+
 /** Error body shape returned by {@link stripeErrorHandler}. */
 export interface StripeErrorBody {
   error: {
@@ -60,11 +83,20 @@ export const stripeErrorResponse = (c: Context, err: StripeError, locale?: Local
     })
 
   if (err instanceof errors.StripeCardError) {
-    const declineCode = err.decline_code ?? err.code
+    const declineCode = err.decline_code || err.code
+    if (declineCode && SENSITIVE_DECLINE_CODES.has(declineCode)) {
+      return body(402, 'card_error', 'Your card was declined.', {
+        code: 'generic_decline',
+        userMessage: getDeclineMessage('generic_decline', locale),
+        retryable: isSoftDecline('generic_decline'),
+      })
+    }
     return body(402, 'card_error', err.message, {
       code: declineCode,
       userMessage: declineCode ? getDeclineMessage(declineCode, locale) : undefined,
-      retryable: declineCode ? isSoftDecline(declineCode) : undefined,
+      // Only a real decline_code classifies soft/hard; `card_declined` etc.
+      // in `err.code` say nothing about retryability.
+      retryable: err.decline_code ? isSoftDecline(err.decline_code) : undefined,
     })
   }
   if (
@@ -79,7 +111,7 @@ export const stripeErrorResponse = (c: Context, err: StripeError, locale?: Local
   if (err instanceof errors.StripeSignatureVerificationError) {
     return body(400, 'signature_verification_failed', 'Webhook signature verification failed.')
   }
-  if (err instanceof errors.StripeRateLimitError || err instanceof errors.RateLimitError) {
+  if (isAnyOf(err, ['StripeRateLimitError', 'RateLimitError'])) {
     return body(429, 'rate_limit', 'Stripe rate limit reached — retry the request.')
   }
   if (err instanceof errors.StripeConnectionError || err instanceof errors.StripeAPIError) {
@@ -88,7 +120,7 @@ export const stripeErrorResponse = (c: Context, err: StripeError, locale?: Local
   if (
     err instanceof errors.StripeAuthenticationError ||
     err instanceof errors.StripePermissionError ||
-    err instanceof errors.StripeOAuthError
+    isAnyOf(err, ['StripeOAuthError'])
   ) {
     return body(500, 'stripe_auth_error', 'Stripe integration is misconfigured.')
   }

@@ -80,10 +80,46 @@ describe('stripeErrorHandler', () => {
 
   it('marks hard declines as not retryable', async () => {
     const res = await makeApp(() => {
-      throw cardError('fraudulent')
+      throw cardError('restricted_card')
     }).request('/boom')
     const { error } = await res.json()
     expect(error.retryable).toBe(false)
+  })
+
+  it.each(['fraudulent', 'lost_card', 'stolen_card', 'merchant_blacklist'])(
+    'masks sensitive decline code %s as generic_decline',
+    async (code) => {
+      const res = await makeApp(() => {
+        throw cardError(code, `Raw: ${code}`)
+      }).request('/boom')
+      expect(res.status).toBe(402)
+      const { error } = await res.json()
+      const generic = await (
+        await makeApp(() => {
+          throw cardError('generic_decline')
+        }).request('/boom')
+      ).json()
+      expect(error.code).toBe('generic_decline')
+      expect(error.message).not.toContain(code)
+      expect(error.userMessage).toBe(generic.error.userMessage)
+      expect(error.retryable).toBe(generic.error.retryable)
+      expect(JSON.stringify(error)).not.toContain(code)
+    },
+  )
+
+  it('leaves retryable unset when only err.code (card_declined) is present', async () => {
+    const err = new Stripe.errors.StripeCardError({
+      type: 'card_error',
+      message: 'Your card was declined.',
+      code: 'card_declined',
+      requestId: 'req_123',
+    } as never)
+    const res = await makeApp(() => {
+      throw err
+    }).request('/boom')
+    const { error } = await res.json()
+    expect(error.code).toBe('card_declined')
+    expect(error.retryable).toBeUndefined()
   })
 
   it('maps StripeInvalidRequestError → 400', async () => {

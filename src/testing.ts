@@ -129,13 +129,18 @@ export const createWebhookRequest = async (
 ): Promise<Request> => {
   const payload = typeof event === 'string' ? event : JSON.stringify(event)
   const signature = await signStripePayload(payload, options.secret, options.timestamp)
+  const headers = new Headers({
+    'content-type': 'application/json',
+    'stripe-signature': signature,
+  })
+  // `HeadersInit` may be a Headers instance or tuple array, which object
+  // spread would silently drop.
+  new Headers(options.headers).forEach((value, key) => {
+    headers.set(key, value)
+  })
   return new Request(options.url ?? 'http://localhost/webhook', {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'stripe-signature': signature,
-      ...options.headers,
-    },
+    headers,
     body: payload,
   })
 }

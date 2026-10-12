@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import type Stripe from 'stripe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { memoryEventStore } from '../src/dedupe'
@@ -139,6 +139,56 @@ describe('stripeWebhook', () => {
     const retry = await postEvent(app, 'payment_intent.succeeded', { id: 'pi_1' }, 'evt_fail')
     expect(retry.status).toBe(200)
     expect(handler).toHaveBeenCalledTimes(2)
+  })
+
+  it('runs the handler once for concurrent deliveries of the same event', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const handler = vi.fn(() => gate)
+    const app = buildApp({
+      dedupe: memoryEventStore(),
+      on: { 'payment_intent.succeeded': handler },
+    })
+
+    const a = postEvent(app, 'payment_intent.succeeded', { id: 'pi_1' }, 'evt_race')
+    const b = postEvent(app, 'payment_intent.succeeded', { id: 'pi_1' }, 'evt_race')
+    // Let both deliveries reach the claim before the first handler finishes.
+    await new Promise((r) => setTimeout(r, 20))
+    release()
+    const bodies = await Promise.all([(await a).json(), (await b).json()])
+
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(bodies).toContainEqual({ received: true })
+    expect(bodies).toContainEqual({ received: true, duplicate: true })
+  })
+
+  it('releases the claim when the handler returns a non-2xx Response', async () => {
+    const handler = vi.fn((_e: unknown, c: Context): Response => c.json({ error: 'later' }, 503))
+    const app = buildApp({
+      dedupe: memoryEventStore(),
+      on: { 'payment_intent.succeeded': handler },
+    })
+
+    const first = await postEvent(app, 'payment_intent.succeeded', { id: 'pi_1' }, 'evt_503')
+    expect(first.status).toBe(503)
+
+    handler.mockImplementationOnce((_e: unknown, c: Context): Response => c.json({ ok: true }))
+    const retry = await postEvent(app, 'payment_intent.succeeded', { id: 'pi_1' }, 'evt_503')
+    expect(retry.status).toBe(200)
+    expect(await retry.json()).toEqual({ ok: true })
+    expect(handler).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the claim after a 2xx Response from onUnhandled', async () => {
+    const onUnhandled = vi.fn((_e: unknown, c: Context) => c.json({ ignored: true }))
+    const app = buildApp({ dedupe: memoryEventStore(), onUnhandled })
+
+    await postEvent(app, 'customer.updated', { id: 'cus_1' }, 'evt_ok')
+    const dup = await postEvent(app, 'customer.updated', { id: 'cus_1' }, 'evt_ok')
+    expect(await dup.json()).toEqual({ received: true, duplicate: true })
+    expect(onUnhandled).toHaveBeenCalledTimes(1)
   })
 
   it('reads the webhook secret from process.env when secret is omitted', async () => {

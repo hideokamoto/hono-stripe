@@ -56,6 +56,24 @@ describe('createWebhookRequest', () => {
     expect(event.type).toBe('checkout.session.completed')
   })
 
+  it('merges extra headers given as Headers, tuples, or a record', async () => {
+    const base = { secret: SECRET }
+    const fromInstance = await createWebhookRequest('{}', {
+      ...base,
+      headers: new Headers({ 'x-a': '1' }),
+    })
+    const fromTuples = await createWebhookRequest('{}', { ...base, headers: [['x-a', '2']] })
+    const fromRecord = await createWebhookRequest('{}', {
+      ...base,
+      headers: { 'x-a': '3', 'content-type': 'text/plain' },
+    })
+    expect(fromInstance.headers.get('x-a')).toBe('1')
+    expect(fromTuples.headers.get('x-a')).toBe('2')
+    expect(fromRecord.headers.get('x-a')).toBe('3')
+    expect(fromRecord.headers.get('content-type')).toBe('text/plain')
+    expect(fromRecord.headers.get('stripe-signature')).toMatch(/^t=/)
+  })
+
   it('accepts a pre-serialized payload and signs exactly those bytes', async () => {
     const payload = '{"a":1,  "b":[true]}'
     const req = await createWebhookRequest(payload, { secret: SECRET })

@@ -70,7 +70,7 @@ export interface StripePaymentFormProps {
   publishableKey?: string
   /** Which kind of secret drives the element. Default: `payment`. */
   intent?: 'payment' | 'checkout'
-  /** DOM id for the `<stripe-payment-element>`. Default: `hono-stripe-payment`. */
+  /** DOM id for the `<stripe-payment-element>`. Default: a unique generated id. */
   id?: string
   class?: string
   /** Passed through to {@link StripeElementsScript}. */
@@ -100,7 +100,7 @@ export const StripePaymentForm: FC<StripePaymentFormProps> = (props) => {
       'hono-stripe/ui: <StripePaymentForm> requires either `clientSecret` (SSR) or `endpoint` (client fetch).',
     )
   }
-  const id = props.id ?? 'hono-stripe-payment'
+  const id = props.id ?? `hono-stripe-payment-${globalThis.crypto.randomUUID()}`
   const isCheckout = props.intent === 'checkout'
   return (
     <>
@@ -119,14 +119,17 @@ export const StripePaymentForm: FC<StripePaymentFormProps> = (props) => {
   )
 }
 
+/** JSON-encode for embedding in an inline `<script>`: `<` is escaped so a value containing `</script>` cannot close the element. */
+const jsLiteral = (value: unknown): string => JSON.stringify(value).replace(/</g, '\\u003c')
+
 const bootstrapScript = (id: string, props: StripePaymentFormProps): string => {
   const secretProp =
     props.intent === 'checkout' ? 'checkoutSessionClientSecret' : 'intentClientSecret'
-  const fallbackKey = JSON.stringify(props.publishableKey ?? null)
-  return `const res = await fetch(${JSON.stringify(props.endpoint)}, { method: 'POST' });
+  const fallbackKey = jsLiteral(props.publishableKey ?? null)
+  return `const res = await fetch(${jsLiteral(props.endpoint)}, { method: 'POST' });
 if (!res.ok) throw new Error('[hono-stripe] payment endpoint failed: ' + res.status);
 const data = await res.json();
-const el = document.getElementById(${JSON.stringify(id)});
+const el = document.getElementById(${jsLiteral(id)});
 el.publishableKey = data.publishableKey ?? ${fallbackKey};
 el.${secretProp} = data.clientSecret;`
 }
