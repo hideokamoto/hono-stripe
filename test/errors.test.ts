@@ -30,7 +30,9 @@ describe('stripeErrorHandler', () => {
       decline_code: 'insufficient_funds',
       requestId: 'req_123',
     } as never)
-    const res = await makeApp(() => { throw err }).request('/boom')
+    const res = await makeApp(() => {
+      throw err
+    }).request('/boom')
     expect(res.status).toBe(402)
     const body = await res.json()
     expect(body.error.type).toBe('card_error')
@@ -58,8 +60,7 @@ describe('stripeErrorHandler', () => {
     const app = new Hono()
     app.onError(
       stripeErrorHandler({
-        locale: (c) =>
-          c.req.header('accept-language')?.startsWith('ja') ? 'ja' : 'en',
+        locale: (c) => (c.req.header('accept-language')?.startsWith('ja') ? 'ja' : 'en'),
       }),
     )
     app.get('/boom', () => {
@@ -90,7 +91,9 @@ describe('stripeErrorHandler', () => {
       type: 'invalid_request_error',
       message: 'Missing required param: amount.',
     } as never)
-    const res = await makeApp(() => { throw err }).request('/boom')
+    const res = await makeApp(() => {
+      throw err
+    }).request('/boom')
     expect(res.status).toBe(400)
     expect((await res.json()).error.type).toBe('invalid_request')
   })
@@ -100,17 +103,19 @@ describe('stripeErrorHandler', () => {
       type: 'idempotency_error',
       message: 'Keys for non-idempotent requests can only be used once.',
     } as never)
-    const res = await makeApp(() => { throw err }).request('/boom')
+    const res = await makeApp(() => {
+      throw err
+    }).request('/boom')
     expect(res.status).toBe(409)
   })
 
   it('maps StripeSignatureVerificationError → 400 (no details leaked)', async () => {
-    const err = new Stripe.errors.StripeSignatureVerificationError(
-      'sig',
-      'payload',
-      { type: 'signature_verification_error' } as never,
-    )
-    const res = await makeApp(() => { throw err }).request('/boom')
+    const err = new Stripe.errors.StripeSignatureVerificationError('sig', 'payload', {
+      type: 'signature_verification_error',
+    } as never)
+    const res = await makeApp(() => {
+      throw err
+    }).request('/boom')
     expect(res.status).toBe(400)
     expect((await res.json()).error.type).toBe('signature_verification_failed')
   })
@@ -120,7 +125,9 @@ describe('stripeErrorHandler', () => {
       type: 'rate_limit_error',
       message: 'Too many requests.',
     } as never)
-    const res = await makeApp(() => { throw err }).request('/boom')
+    const res = await makeApp(() => {
+      throw err
+    }).request('/boom')
     expect(res.status).toBe(429)
   })
 
@@ -129,7 +136,9 @@ describe('stripeErrorHandler', () => {
       type: 'api_connection_error',
       message: 'Network error.',
     } as never)
-    const res = await makeApp(() => { throw conn }).request('/boom')
+    const res = await makeApp(() => {
+      throw conn
+    }).request('/boom')
     expect(res.status).toBe(502)
   })
 
@@ -138,7 +147,9 @@ describe('stripeErrorHandler', () => {
       type: 'authentication_error',
       message: 'Invalid API Key provided: sk_live_****SENSITIVE****',
     } as never)
-    const res = await makeApp(() => { throw err }).request('/boom')
+    const res = await makeApp(() => {
+      throw err
+    }).request('/boom')
     expect(res.status).toBe(500)
     const body = await res.json()
     expect(body.error.message).toBe('Stripe integration is misconfigured.')
@@ -180,7 +191,9 @@ describe('stripeErrorHandler', () => {
       message: 'weird',
       statusCode: 422,
     } as never)
-    const res = await makeApp(() => { throw err }).request('/boom')
+    const res = await makeApp(() => {
+      throw err
+    }).request('/boom')
     expect(res.status).toBe(422)
   })
 })

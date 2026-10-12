@@ -29,8 +29,7 @@ export interface StripeErrorBody {
   }
 }
 
-const json = (c: Context, status: number, body: StripeErrorBody) =>
-  c.json(body, status as never)
+const json = (c: Context, status: number, body: StripeErrorBody) => c.json(body, status as never)
 
 type StripeError = InstanceType<typeof Stripe.errors.StripeError>
 
@@ -49,11 +48,7 @@ type StripeError = InstanceType<typeof Stripe.errors.StripeError>
  *   message — Stripe's raw message can leak account/key details
  * - Anything else with a client-error `statusCode` → that status; else 502
  */
-export const stripeErrorResponse = (
-  c: Context,
-  err: StripeError,
-  locale?: Locale,
-): Response => {
+export const stripeErrorResponse = (c: Context, err: StripeError, locale?: Locale): Response => {
   const body = (
     status: number,
     type: string,
@@ -87,10 +82,7 @@ export const stripeErrorResponse = (
   if (err instanceof errors.StripeRateLimitError || err instanceof errors.RateLimitError) {
     return body(429, 'rate_limit', 'Stripe rate limit reached — retry the request.')
   }
-  if (
-    err instanceof errors.StripeConnectionError ||
-    err instanceof errors.StripeAPIError
-  ) {
+  if (err instanceof errors.StripeConnectionError || err instanceof errors.StripeAPIError) {
     return body(502, 'stripe_unavailable', 'Stripe request failed upstream — safe to retry.')
   }
   if (
@@ -145,8 +137,7 @@ export const stripeErrorHandler = (options?: StripeErrorHandlerOptions): ErrorHa
   return (err, c) => {
     if (err instanceof HTTPException) return err.getResponse()
     if (err instanceof errors.StripeError) {
-      const locale =
-        typeof options?.locale === 'function' ? options.locale(c) : options?.locale
+      const locale = typeof options?.locale === 'function' ? options.locale(c) : options?.locale
       return stripeErrorResponse(c, err, locale)
     }
     if (options?.fallback) return options.fallback(err, c)

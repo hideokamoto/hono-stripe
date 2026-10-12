@@ -7,6 +7,6 @@
   // Static-assets-only Worker: `wrangler deploy` publishes the Astro build
   // output. No Worker script needed — Starlight's dist/ is served as-is.
   "assets": {
-    "directory": "./dist",
-  },
+    "directory": "./dist"
+  }
 }

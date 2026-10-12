@@ -1,15 +1,9 @@
 import { Hono } from 'hono'
 import type { HtmlEscapedString } from 'hono/utils/html'
 import { describe, expect, it } from 'vitest'
-import {
-  STRIPE_ELEMENTS_CDN_URL,
-  StripeElementsScript,
-  StripePaymentForm,
-} from '../src/ui'
+import { STRIPE_ELEMENTS_CDN_URL, StripeElementsScript, StripePaymentForm } from '../src/ui'
 
-const render = async (
-  element: HtmlEscapedString | Promise<HtmlEscapedString>,
-): Promise<string> => {
+const render = async (element: HtmlEscapedString | Promise<HtmlEscapedString>): Promise<string> => {
   const app = new Hono().get('/', (c) => c.html(element))
   const res = await app.request('/')
   return res.text()
@@ -42,9 +36,7 @@ describe('StripePaymentForm', () => {
   })
 
   it('uses checkoutSessionClientSecret in checkout mode', async () => {
-    const html = await render(
-      <StripePaymentForm endpoint="/api/checkout" intent="checkout" />,
-    )
+    const html = await render(<StripePaymentForm endpoint="/api/checkout" intent="checkout" />)
     expect(html).toContain('el.checkoutSessionClientSecret = data.clientSecret')
   })
 
@@ -55,9 +47,7 @@ describe('StripePaymentForm', () => {
   })
 
   it('throws when neither endpoint nor clientSecret is provided', async () => {
-    const app = new Hono().get('/', (c) =>
-      c.html(<StripePaymentForm publishableKey="pk_test_1" />),
-    )
+    const app = new Hono().get('/', (c) => c.html(<StripePaymentForm publishableKey="pk_test_1" />))
     app.onError((err, c) => c.text(err.message, 500))
     const res = await app.request('/')
     expect(res.status).toBe(500)

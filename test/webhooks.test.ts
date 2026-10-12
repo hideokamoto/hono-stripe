@@ -20,9 +20,11 @@ afterEach(() => {
 // verification runs through the real stripe SDK — constructEventAsync performs
 // HMAC checks locally, so no network access is needed. { apiKey } lets the
 // middleware build its own verification client without stripeMiddleware().
-const buildApp = (options: Omit<Parameters<typeof stripeWebhook>[0], 'on'> & {
-  on?: Parameters<typeof stripeWebhook>[0]['on']
-}) =>
+const buildApp = (
+  options: Omit<Parameters<typeof stripeWebhook>[0], 'on'> & {
+    on?: Parameters<typeof stripeWebhook>[0]['on']
+  },
+) =>
   new Hono().post(
     '/webhook',
     stripeWebhook({ apiKey: API_KEY, secret: WEBHOOK_SECRET, on: {}, ...options }),
@@ -177,7 +179,10 @@ describe('stripeWebhook', () => {
       c.set('stripe', { webhooks: { constructEventAsync } } as unknown as Stripe)
       await next()
     })
-    app.post('/webhook', stripeWebhook({ secret: WEBHOOK_SECRET, on: { 'payment_intent.succeeded': handler } }))
+    app.post(
+      '/webhook',
+      stripeWebhook({ secret: WEBHOOK_SECRET, on: { 'payment_intent.succeeded': handler } }),
+    )
 
     const res = await app.request('/webhook', {
       method: 'POST',

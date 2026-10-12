@@ -1,10 +1,6 @@
 import Stripe from 'stripe'
 import { describe, expect, it } from 'vitest'
-import {
-  createTestEvent,
-  createWebhookRequest,
-  signStripePayload,
-} from '../src/testing'
+import { createTestEvent, createWebhookRequest, signStripePayload } from '../src/testing'
 
 const SECRET = 'whsec_test_signing_secret'
 // constructEventAsync performs HMAC verification locally — no network needed.
@@ -25,9 +21,9 @@ describe('signStripePayload', () => {
     const payload = '{}'
     const old = Math.floor(Date.now() / 1000) - 3600
     const header = await signStripePayload(payload, SECRET, old)
-    await expect(
-      stripe.webhooks.constructEventAsync(payload, header, SECRET, 300),
-    ).rejects.toThrow(/timestamp/i)
+    await expect(stripe.webhooks.constructEventAsync(payload, header, SECRET, 300)).rejects.toThrow(
+      /timestamp/i,
+    )
   })
 })
 

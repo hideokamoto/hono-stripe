@@ -1,16 +1,16 @@
 import type { Context, MiddlewareHandler } from 'hono'
 import { env } from 'hono/adapter'
 import type Stripe from 'stripe'
+import type { StripeEventStore } from './dedupe'
 import { getStripeClient } from './runtime'
 import type { StripeMiddlewareOptions } from './types'
-import { constructVerifiedEvent, verifyStripeSignature } from './webhook'
 import type { VerifyStripeSignatureOptions } from './webhook'
-import type { StripeEventStore } from './dedupe'
+import { constructVerifiedEvent, verifyStripeSignature } from './webhook'
 
-export { verifyStripeSignature }
+export type { KVNamespaceLike, StripeEventStore } from './dedupe'
+export { kvEventStore, memoryEventStore } from './dedupe'
 export type { VerifyStripeSignatureOptions }
-export { memoryEventStore, kvEventStore } from './dedupe'
-export type { StripeEventStore, KVNamespaceLike } from './dedupe'
+export { verifyStripeSignature }
 
 const DEFAULT_WEBHOOK_SECRET_VAR = 'STRIPE_WEBHOOK_SECRET'
 const DEFAULT_API_KEY_VAR = 'STRIPE_SECRET_KEY'
@@ -113,12 +113,8 @@ export interface StripeWebhookOptions
   dedupeTtlSeconds?: number
 }
 
-const resolveWebhookSecret = async (
-  c: Context,
-  options: StripeWebhookOptions,
-): Promise<string> => {
-  const explicit =
-    typeof options.secret === 'function' ? await options.secret(c) : options.secret
+const resolveWebhookSecret = async (c: Context, options: StripeWebhookOptions): Promise<string> => {
+  const explicit = typeof options.secret === 'function' ? await options.secret(c) : options.secret
   if (explicit) return explicit
   const secretVar = options.webhookSecretVar ?? DEFAULT_WEBHOOK_SECRET_VAR
   const fromEnv = env<Record<string, string | undefined>>(c)[secretVar]
@@ -190,8 +186,7 @@ export const stripeWebhook = (options: StripeWebhookOptions): MiddlewareHandler 
       tolerance: options.tolerance,
     })
 
-    const store =
-      typeof options.dedupe === 'function' ? options.dedupe(c) : options.dedupe
+    const store = typeof options.dedupe === 'function' ? options.dedupe(c) : options.dedupe
     if (store && (await store.has(event.id))) {
       return c.json({ received: true, duplicate: true })
     }
@@ -200,9 +195,7 @@ export const stripeWebhook = (options: StripeWebhookOptions): MiddlewareHandler 
     // event is only known as Stripe.Event, so the narrowed handler signature
     // cannot be proven — but `on` keys are exactly `event.type` values.
     const handler = options.on[event.type] as StripeWebhookHandler | undefined
-    const result = handler
-      ? await handler(event, c)
-      : await options.onUnhandled?.(event, c)
+    const result = handler ? await handler(event, c) : await options.onUnhandled?.(event, c)
 
     if (store) {
       await store.put(event.id, options.dedupeTtlSeconds ?? DEFAULT_DEDUPE_TTL_SECONDS)

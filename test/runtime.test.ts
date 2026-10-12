@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { __cacheSize, __resetCaches, getStripeClient, type StripeClientConfig } from '../src/runtime'
+import {
+  __cacheSize,
+  __resetCaches,
+  getStripeClient,
+  type StripeClientConfig,
+} from '../src/runtime'
 import type { StripeMiddlewareOptions } from '../src/types'
 
 const KEY = 'sk_test_123'
@@ -45,7 +50,9 @@ describe('getStripeClient cache keying', () => {
     // TypeScript's type system prevents this at compile time, but a JS caller
     // (no type checking) can still omit `options` or pass `null`. The WeakMap
     // used internally throws on a non-object key, so this must not reach it.
-    expect(() => getStripeClient(KEY, undefined as unknown as StripeMiddlewareOptions)).not.toThrow()
+    expect(() =>
+      getStripeClient(KEY, undefined as unknown as StripeMiddlewareOptions),
+    ).not.toThrow()
     expect(() => getStripeClient(KEY, null as unknown as StripeMiddlewareOptions)).not.toThrow()
   })
 })

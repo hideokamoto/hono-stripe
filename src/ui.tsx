@@ -113,17 +113,15 @@ export const StripePaymentForm: FC<StripePaymentFormProps> = (props) => {
       />
       <StripeElementsScript src={props.src} />
       {props.endpoint ? (
-        <script
-          type="module"
-          dangerouslySetInnerHTML={{ __html: bootstrapScript(id, props) }}
-        />
+        <script type="module" dangerouslySetInnerHTML={{ __html: bootstrapScript(id, props) }} />
       ) : null}
     </>
   )
 }
 
 const bootstrapScript = (id: string, props: StripePaymentFormProps): string => {
-  const secretProp = props.intent === 'checkout' ? 'checkoutSessionClientSecret' : 'intentClientSecret'
+  const secretProp =
+    props.intent === 'checkout' ? 'checkoutSessionClientSecret' : 'intentClientSecret'
   const fallbackKey = JSON.stringify(props.publishableKey ?? null)
   return `const res = await fetch(${JSON.stringify(props.endpoint)}, { method: 'POST' });
 if (!res.ok) throw new Error('[hono-stripe] payment endpoint failed: ' + res.status);

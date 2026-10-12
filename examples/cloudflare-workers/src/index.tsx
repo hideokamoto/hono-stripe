@@ -1,12 +1,7 @@
 import { Hono } from 'hono'
-import {
-  stripeMiddleware,
-  getStripe,
-  stripeErrorHandler,
-  type StripeEnv,
-} from 'hono-stripe'
-import { stripeWebhook, memoryEventStore } from 'hono-stripe/webhook'
+import { getStripe, type StripeEnv, stripeErrorHandler, stripeMiddleware } from 'hono-stripe'
 import { StripePaymentForm } from 'hono-stripe/ui'
+import { memoryEventStore, stripeWebhook } from 'hono-stripe/webhook'
 import { Layout } from './layout'
 
 type Bindings = {

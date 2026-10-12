@@ -2,8 +2,8 @@ import { Hono } from 'hono'
 import type Stripe from 'stripe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { __resetCaches } from '../src/runtime'
-import { verifyStripeSignature } from '../src/webhook'
 import type { StripeEnv } from '../src/types'
+import { verifyStripeSignature } from '../src/webhook'
 
 const SECRET = 'whsec_test'
 
