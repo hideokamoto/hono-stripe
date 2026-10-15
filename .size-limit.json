@@ -22,5 +22,23 @@
     "path": "dist/ui.js",
     "limit": "1 kB",
     "brotli": true
+  },
+  {
+    "name": "ESM (dist/billing/index.js)",
+    "path": "dist/billing/index.js",
+    "limit": "4 kB",
+    "brotli": true
+  },
+  {
+    "name": "ESM (dist/billing/schema.js)",
+    "path": "dist/billing/schema.js",
+    "limit": "1 kB",
+    "brotli": true
+  },
+  {
+    "name": "ESM (dist/ec/index.js)",
+    "path": "dist/ec/index.js",
+    "limit": "2 kB",
+    "brotli": true
   }
 ]

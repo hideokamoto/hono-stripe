@@ -1,0 +1,23 @@
+{
+ "name": "sync-03",
+ "policy": "payload_guard",
+ "storeAtomic": true,
+ "snapshots": {
+  "1": 1,
+  "2": 2
+ },
+ "events": [
+  "emit",
+  "emit",
+  "deliver2",
+  "finish2",
+  "deliver1",
+  "finish1"
+ ],
+ "final": {
+  "truth": 2,
+  "mirrorVersion": 2,
+  "mirrorCreated": 1,
+  "quiescent": true
+ }
+}

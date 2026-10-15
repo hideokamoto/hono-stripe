@@ -7,3 +7,5 @@ dist/
 .astro/
 # TypeDoc-generated API pages (rebuilt on every docs build)
 docs/src/content/docs/api/
+.chunk/validate-pool.json
+spec/*.local.md
