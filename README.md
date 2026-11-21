@@ -323,6 +323,27 @@ The docs site lives in [`docs/`](./docs) (Starlight + TypeDoc, deployed to
 Cloudflare Workers Static Assets). Run it locally with `pnpm -C docs dev`; see
 [`docs/README.md`](./docs/README.md) for build/deploy details.
 
+## Development
+
+```sh
+pnpm test              # unit tests (mocked Stripe client, no network)
+pnpm test:integration  # integration tests against stripe-mock
+```
+
+The integration tests (`test/integration/`) drive the real `stripe` SDK over
+HTTP against [stripe-mock](https://github.com/stripe/stripe-mock), so they
+catch what mocked unit tests can't: `config` reaching the SDK, the Fetch HTTP
+client on Workers, and real SDK errors flowing through `stripeErrorHandler`.
+Start stripe-mock first — the run fails up front if it is not reachable:
+
+```sh
+docker run --rm -p 12111-12112:12111-12112 stripe/stripe-mock:v0.206.0
+```
+
+Override the address with `STRIPE_MOCK_HOST` / `STRIPE_MOCK_PORT`. stripe-mock
+is stateless and does not simulate card declines, so those paths stay in the
+unit tests.
+
 ## Bundle size
 
 Staying thin is a feature. CI enforces a

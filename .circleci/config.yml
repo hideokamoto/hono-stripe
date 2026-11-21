@@ -1,79 +1,176 @@
-# CircleCI: bundle-size guard for hono-stripe.
+# CircleCI: hono-stripe-specific CI (pipeline "ci", managed in hideokamoto/circleci-infra
+# npm_libraries.tf with config_in_repo = true).
 #
-# hono-stripe is meant to stay thin (peer deps only, stripe/hono externalized
-# in tsup). This pipeline builds the package, enforces a brotli size budget with
-# size-limit (.size-limit.json), and posts the current sizes back to the PR
-# using the GitHub CLI.
+# Lint / typecheck / build / unit tests run in the separate "validate" pipeline, which reads
+# the shared template hideokamoto/circleci-configurations workflows/validation/npm.yaml.
+# This file only holds what is specific to this repository:
 #
-# The size report is posted to the PR *before* the budget is enforced, so an
-# over-budget PR still gets the report comment and then fails. Commenting is
-# best-effort: missing token (fork PRs) or a transient GitHub error is a warning,
-# never a hard build failure — only the size budget fails the job.
+#   integration  — `pnpm test:integration` against stripe-mock (secondary container):
+#                  the real stripe-node SDK over real HTTP, with only the Stripe API mocked.
+#   size         — size-limit measurement (.size-limit.json). Runs project code, no secrets.
+#   size-report  — posts the size report to the PR, then enforces the budget. Holds the
+#                  `github` context (GITHUB_TOKEN) but never installs or runs project code:
+#                  it only reads the JSON produced by `size` from the workspace.
 #
-# Prerequisites (set up once by a maintainer — cannot be done in code):
-#   1. Enable this repository as a CircleCI project (CircleCI GitHub App).
-#   2. Add a GITHUB_TOKEN env var (a PAT with `pull_requests: write` / `repo`)
-#      to the CircleCI project or a context. The gh CLI reads it from the
-#      environment to post the size report. On fork PRs the token is absent and
-#      the comment step is skipped (the size budget is still enforced).
+# Conventions follow circleci-configurations workflows/validation/npm.yaml:
+#   - cimg/node pinned by digest (tags are rebuilt in place).
+#   - No corepack (`corepack enable` fails with EACCES on cimg/node:24.22.3,
+#     CircleCI-Public/cimg-node#555). The pnpm bundled in the image switches to the
+#     version declared in package.json `packageManager`.
+#   - Context `github` exposes GITHUB_TOKEN (see the /circleci-github-context skill
+#     in circleci-configurations).
 version: 2.1
 
 orbs:
-  gh: circleci/github-cli@2.3.0
+  gh: circleci/github-cli@2.7.2
 
-jobs:
-  size:
+executors:
+  node:
     docker:
-      - image: cimg/node:22.14
+      # Same image/digest as circleci-configurations workflows/validation/npm.yaml.
+      # Update tag and digest together: https://hub.docker.com/r/cimg/node/tags
+      - image: cimg/node:24.22.3@sha256:88cf1a521455f70a79b81fd46bd4e51ebdae03dfae34b85d13f21d868960bee3
+    resource_class: small
+
+commands:
+  install:
+    description: Install dependencies with the pnpm version from package.json `packageManager`.
     steps:
-      - checkout
-      # Match package.json's packageManager (pnpm@11.7.0) exactly.
-      - run:
-          name: Enable pnpm
-          command: |
-            corepack enable
-            corepack prepare pnpm@11.7.0 --activate
+      - restore_cache:
+          name: Restore dependency cache
+          keys:
+            - v1-hono-stripe-ci-{{ checksum "pnpm-lock.yaml" }}
       - run:
           name: Install dependencies
-          command: pnpm install --frozen-lockfile
+          command: |
+            set -euo pipefail
+            echo "pnpm $(pnpm --version) (launcher: $(command -v pnpm))"
+            pnpm install --frozen-lockfile
+      - save_cache:
+          name: Save dependency cache
+          key: v1-hono-stripe-ci-{{ checksum "pnpm-lock.yaml" }}
+          paths:
+            - node_modules
+            - ~/.local/share/pnpm/store
+
+jobs:
+  integration:
+    docker:
+      - image: cimg/node:24.22.3@sha256:88cf1a521455f70a79b81fd46bd4e51ebdae03dfae34b85d13f21d868960bee3
+      # stripe-mock v0.206.0 (multi-arch index digest). Update tag and digest together:
+      # https://hub.docker.com/r/stripe/stripe-mock/tags
+      - image: stripe/stripe-mock:v0.206.0@sha256:aeb96b83e87a893d2ac005e363ac01ffa6e59a5ad85b49c155dfc9129de02e78
+    resource_class: small
+    environment:
+      STRIPE_MOCK_HOST: localhost
+      STRIPE_MOCK_PORT: "12111"
+    steps:
+      - checkout
+      - install
+      - run:
+          name: Wait for stripe-mock
+          command: |
+            set -euo pipefail
+            for _ in $(seq 1 30); do
+              if curl -sf -o /dev/null -H "Authorization: Bearer sk_test_123" \
+                "http://${STRIPE_MOCK_HOST}:${STRIPE_MOCK_PORT}/v1/customers"; then
+                echo "stripe-mock is up."
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "stripe-mock did not become ready within 30s." >&2
+            exit 1
+      - run:
+          name: Integration tests (stripe-mock)
+          command: pnpm test:integration
+
+  size:
+    executor: node
+    steps:
+      - checkout
+      - install
       - run:
           name: Build
           command: pnpm run build
-      # Install gh (no auth here — gh reads GITHUB_TOKEN from the env when set,
-      # so this step is safe even on fork PRs where no token is available).
+      - run:
+          name: Measure bundle size
+          command: |
+            set -uo pipefail
+            mkdir -p size-report
+            # Don't fail yet: size-report posts the numbers first, then enforces the budget.
+            SIZE_EXIT=0
+            pnpm exec size-limit --json > size-report/size.json || SIZE_EXIT=$?
+            echo "${SIZE_EXIT}" > size-report/exit-code
+            cat size-report/size.json
+            # A non-JSON result means size-limit itself broke (not an over-budget result).
+            jq -e 'type == "array"' size-report/size.json > /dev/null
+      - persist_to_workspace:
+          root: .
+          paths:
+            - size-report
+
+  size-report:
+    executor: node
+    steps:
+      - attach_workspace:
+          at: .
       - gh/install
       - run:
-          name: Measure bundle size, comment on PR, then enforce budget
+          name: Post size report to the PR, then enforce the budget
           command: |
-            # Measure but DON'T abort yet: capture the exit code so we can post
-            # the report before failing on an over-budget PR.
-            SIZE_EXIT=0
-            pnpm exec size-limit --json > size.json || SIZE_EXIT=$?
-
-            # Build the report (also echoed to the build log via tee).
+            set -euo pipefail
             {
               echo "<!-- size-limit-report -->"
               echo "## 📦 Bundle size (size-limit)"
               echo ""
               echo "| File | Size | Limit | Status |"
               echo "| -- | -- | -- | -- |"
-              jq -r '.[] | "| \(.name) | \(.size) B | \(.sizeLimit) B | \(if .passed then "✅" else "❌" end) |"' size.json
-            } | tee body.md
+              jq -r '.[] | "| \(.name) | \(.size) B | \(.sizeLimit) B | \(if .passed then "✅" else "❌" end) |"' size-report/size.json
+            } | tee size-report/body.md
 
-            # Post to the PR — best effort only. Skipped on non-PR builds and on
-            # fork PRs (no token); a transient failure is a warning, not fatal.
-            if [ -n "$CIRCLE_PULL_REQUEST" ] && { [ -n "$GITHUB_TOKEN" ] || [ -n "$GH_TOKEN" ]; }; then
-              gh pr comment "$CIRCLE_PULL_REQUEST" --body-file body.md --edit-last \
-                || gh pr comment "$CIRCLE_PULL_REQUEST" --body-file body.md \
-                || echo "Warning: failed to post the bundle-size comment."
-            else
-              echo "Skipping PR comment (not a PR build, or no GITHUB_TOKEN/GH_TOKEN — e.g. fork PR)."
+            REPO="${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
+            # CIRCLE_PULL_REQUEST is not always set for push-triggered pipelines, so fall back
+            # to looking up the open PR for this branch.
+            PR="${CIRCLE_PULL_REQUEST:-}"
+            if [ -z "${PR}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+              PR="$(gh pr list --repo "${REPO}" --head "${CIRCLE_BRANCH}" --state open \
+                --json url --jq '.[0].url // ""' || true)"
             fi
 
-            # Enforce the budget last, so the report is always posted first.
-            exit "$SIZE_EXIT"
+            # Update our own report comment (found by its marker) instead of `--edit-last`,
+            # which edits the token owner's latest comment — with a personal token that can
+            # overwrite a human-written comment.
+            post_report() {
+              local number="${PR##*/}" comment_id
+              comment_id="$(gh api --paginate "repos/${REPO}/issues/${number}/comments" \
+                --jq '.[] | select(.body | startswith("<!-- size-limit-report -->")) | .id' | tail -n 1)"
+              if [ -n "${comment_id}" ]; then
+                gh api -X PATCH "repos/${REPO}/issues/comments/${comment_id}" \
+                  -F body=@size-report/body.md > /dev/null
+              else
+                gh pr comment "${PR}" --repo "${REPO}" --body-file size-report/body.md
+              fi
+            }
+
+            # Best effort: a missing token or a transient GitHub error is a warning, never a
+            # failure. Only the size budget fails this job.
+            if [ -z "${GITHUB_TOKEN:-}" ]; then
+              echo "Skipping PR comment: GITHUB_TOKEN is not set (context \`github\`)."
+            elif [ -z "${PR}" ]; then
+              echo "Skipping PR comment: no open PR for branch ${CIRCLE_BRANCH}."
+            else
+              post_report || echo "Warning: failed to post the bundle-size comment."
+            fi
+
+            exit "$(cat size-report/exit-code)"
 
 workflows:
-  bundle-size:
+  ci:
     jobs:
+      - integration
       - size
+      - size-report:
+          context: github
+          requires:
+            - size
