@@ -40,6 +40,7 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'Webhooks', slug: 'guides/webhooks' },
+            { label: 'Billing', slug: 'guides/billing' },
             { label: 'Testing', slug: 'guides/testing' },
             { label: 'Payment UI', slug: 'guides/ui' },
             { label: 'Deployment', slug: 'guides/deployment' },

@@ -1,0 +1,25 @@
+{
+ "name": "sync-10",
+ "policy": "fetch_guard",
+ "storeAtomic": false,
+ "snapshots": {
+  "1": 2,
+  "2": 2
+ },
+ "events": [
+  "emit",
+  "emit",
+  "deliver2",
+  "begin2",
+  "deliver1",
+  "begin1",
+  "commit1",
+  "commit2"
+ ],
+ "final": {
+  "truth": 2,
+  "mirrorVersion": 2,
+  "mirrorCreated": 1,
+  "quiescent": true
+ }
+}

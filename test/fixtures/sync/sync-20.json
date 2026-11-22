@@ -1,0 +1,25 @@
+{
+ "name": "sync-20",
+ "policy": "fetch_lww",
+ "storeAtomic": false,
+ "snapshots": {
+  "1": 2,
+  "2": 2
+ },
+ "events": [
+  "emit",
+  "emit",
+  "deliver1",
+  "begin1",
+  "commit1",
+  "deliver2",
+  "begin2",
+  "commit2"
+ ],
+ "final": {
+  "truth": 2,
+  "mirrorVersion": 2,
+  "mirrorCreated": 1,
+  "quiescent": true
+ }
+}

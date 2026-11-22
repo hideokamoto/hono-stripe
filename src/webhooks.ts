@@ -58,6 +58,39 @@ export type StripeWebhookHandlers = {
   [K in StripeEventType]?: StripeWebhookHandler<TypedStripeEvent<K>>
 }
 
+/**
+ * Combine per-event-type handler maps, preserving every handler. When the
+ * same event type appears in multiple maps, handlers run in argument order
+ * and the first non-undefined return value becomes the response. Useful for
+ * layering `billing.handlers` under your own:
+ *
+ * @example
+ * ```ts
+ * stripeWebhook({
+ *   on: mergeWebhookHandlers(billing.handlers, {
+ *     'checkout.session.completed': fulfill,
+ *   }),
+ * })
+ * ```
+ */
+export const mergeWebhookHandlers = (
+  ...maps: StripeWebhookHandlers[]
+): StripeWebhookHandlers => {
+  const merged: Record<string, StripeWebhookHandler | undefined> = {}
+  for (const map of maps) {
+    for (const [key, handler] of Object.entries(map)) {
+      const prev = merged[key]
+      // Same narrowing caveat as the dispatch site: handlers are keyed by
+      // event-type literal, so the merged slot holds a narrowed handler.
+      const next = handler as StripeWebhookHandler | undefined
+      merged[key] = prev
+        ? async (event, c) => (await prev(event, c)) ?? (await next?.(event, c))
+        : next
+    }
+  }
+  return merged as StripeWebhookHandlers
+}
+
 export interface StripeWebhookOptions
   extends Pick<StripeMiddlewareOptions, 'apiVersion' | 'config'> {
   /**
